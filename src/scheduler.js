@@ -45,13 +45,15 @@ async function runJob(client, job, stateStore, key, senders = {}) {
 }
 
 function registerJobs(client, config, stateStore) {
-    const tasks = [];
-
     for (const job of config.jobs) {
         if (!cron.validate(job.schedule)) {
             throw new Error(`Invalid cron schedule for job ${job.id}: ${job.schedule}`);
         }
+    }
 
+    const tasks = [];
+
+    for (const job of config.jobs) {
         const task = cron.schedule(
             job.schedule,
             async () => {
@@ -77,8 +79,32 @@ function registerJobs(client, config, stateStore) {
     return tasks;
 }
 
+class SchedulerManager {
+    constructor(client, stateStore) {
+        this.client = client;
+        this.stateStore = stateStore;
+        this.tasks = [];
+        this.config = null;
+    }
+
+    apply(config) {
+        const nextTasks = registerJobs(this.client, config, this.stateStore);
+        this.stop();
+        this.tasks = nextTasks;
+        this.config = config;
+    }
+
+    stop() {
+        for (const task of this.tasks) {
+            task.destroy();
+        }
+        this.tasks = [];
+    }
+}
+
 module.exports = {
     dateKey,
     registerJobs,
-    runJob
+    runJob,
+    SchedulerManager
 };

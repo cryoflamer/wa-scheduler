@@ -119,7 +119,7 @@ function validateJob(job, index, environment) {
     };
 }
 
-function loadConfig(configPath = 'schedule.json', environment = process.env) {
+function loadRawConfig(configPath = 'schedule.json') {
     const resolvedPath = path.resolve(configPath);
 
     if (!fs.existsSync(resolvedPath)) {
@@ -132,6 +132,10 @@ function loadConfig(configPath = 'schedule.json', environment = process.env) {
         throw new Error('Schedule configuration must be a JSON object');
     }
 
+    return parsed;
+}
+
+function normalizeConfig(parsed, environment = process.env) {
     const timezone = requireExpandedString(parsed.timezone, 'timezone', environment);
 
     if (!Array.isArray(parsed.jobs) || parsed.jobs.length === 0) {
@@ -151,7 +155,22 @@ function loadConfig(configPath = 'schedule.json', environment = process.env) {
     return { timezone, jobs };
 }
 
+function loadConfig(configPath = 'schedule.json', environment = process.env) {
+    return normalizeConfig(loadRawConfig(configPath), environment);
+}
+
+function saveRawConfig(config, configPath = 'schedule.json') {
+    const resolvedPath = path.resolve(configPath);
+    const temporaryPath = `${resolvedPath}.tmp`;
+
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`);
+    fs.renameSync(temporaryPath, resolvedPath);
+}
+
 module.exports = {
     expandEnvironment,
-    loadConfig
+    loadConfig,
+    loadRawConfig,
+    normalizeConfig,
+    saveRawConfig
 };

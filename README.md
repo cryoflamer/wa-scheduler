@@ -89,3 +89,21 @@ Alternative paths can be selected with `WA_SCHEDULE_CONFIG` and `WA_STATE_FILE`.
 ```bash
 npm test
 ```
+
+## Local web UI
+
+Starting the scheduler also starts a compact local dashboard on:
+
+```text
+http://127.0.0.1:3000
+```
+
+The UI shows WhatsApp connection status and scheduled jobs. Jobs can be created, edited, deleted, or sent immediately. The schedule editor provides daily, weekly, and monthly forms with an advanced cron fallback.
+
+Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the version-controlled schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked.
+
+Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
+
+`Send now` executes the same job pipeline as scheduled delivery but uses a unique manual-run state key, so it always performs a new send without changing the daily idempotency record of the scheduled run.
+
+The UI binds to `127.0.0.1` by default. `WA_UI_HOST` and `WA_UI_PORT` can override the bind address and port when needed.

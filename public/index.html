@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>wa-scheduler</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="topbar">
+            <div>
+                <h1>wa-scheduler</h1>
+                <p id="summary">Loading…</p>
+            </div>
+            <div id="wa-status" class="status connecting">Connecting</div>
+        </header>
+
+        <section class="toolbar">
+            <h2>Scheduled jobs</h2>
+            <button id="add-job" class="primary">+ Add job</button>
+        </section>
+        <section id="jobs" class="jobs"></section>
+
+        <section class="toolbar recipients-title">
+            <h2>Recipients</h2>
+            <button id="add-recipient">+ Add recipient</button>
+        </section>
+        <section id="recipients" class="recipients"></section>
+    </main>
+
+    <dialog id="job-dialog">
+        <form id="job-form" method="dialog">
+            <header class="dialog-header">
+                <h2 id="job-title">Add job</h2>
+                <button type="button" class="icon" data-close>×</button>
+            </header>
+            <input type="hidden" id="original-id">
+            <label>Job ID<input id="job-id" required placeholder="monday-report"></label>
+            <label>Recipient<select id="job-recipient" required></select></label>
+
+            <div class="schedule-grid">
+                <label>Schedule
+                    <select id="schedule-mode">
+                        <option value="daily">Every day</option>
+                        <option value="weekly">Every week</option>
+                        <option value="monthly">Every month</option>
+                        <option value="advanced">Advanced cron</option>
+                    </select>
+                </label>
+                <label id="weekday-wrap">Day<select id="weekday"></select></label>
+                <label id="monthday-wrap">Day<input id="monthday" type="number" min="1" max="31" value="1"></label>
+                <label id="time-wrap">Time<input id="schedule-time" type="time" value="08:00"></label>
+                <label id="cron-wrap">Cron<input id="cron" placeholder="0 8 * * 1"></label>
+            </div>
+
+            <label>Message<textarea id="job-message" rows="4" placeholder="Optional text message"></textarea></label>
+            <div class="files-header"><span>Files</span><label class="button-like">+ Add file<input id="file-input" type="file" hidden></label></div>
+            <div id="job-files" class="job-files"></div>
+
+            <p id="job-error" class="error"></p>
+            <footer class="dialog-actions">
+                <button type="button" data-close>Cancel</button>
+                <button class="primary" type="submit">Save</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <dialog id="recipient-dialog">
+        <form id="recipient-form" method="dialog">
+            <header class="dialog-header">
+                <h2>Add recipient</h2>
+                <button type="button" class="icon" data-close>×</button>
+            </header>
+            <label>Name<input id="recipient-name" required placeholder="OFFICE"></label>
+            <label>WhatsApp number<input id="recipient-number" required inputmode="tel" placeholder="380XXXXXXXXX"></label>
+            <p id="recipient-error" class="error"></p>
+            <footer class="dialog-actions">
+                <button type="button" data-close>Cancel</button>
+                <button class="primary" type="submit">Save</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <div id="toast" class="toast"></div>
+    <script src="/app.js"></script>
+</body>
+</html>

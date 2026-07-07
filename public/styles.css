@@ -1,0 +1,75 @@
+:root {
+    color-scheme: dark;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1115;
+    color: #e9edf2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #0f1115; }
+button, input, select, textarea { font: inherit; }
+button, .button-like {
+    border: 1px solid #343a45;
+    background: #1b1f27;
+    color: #e9edf2;
+    border-radius: 7px;
+    padding: 7px 11px;
+    cursor: pointer;
+}
+button:hover, .button-like:hover { background: #242a34; }
+button.primary { background: #19a463; border-color: #19a463; color: white; }
+button.danger { color: #ff9b9b; }
+button.icon { border: 0; background: transparent; font-size: 24px; padding: 0 4px; }
+.shell { max-width: 900px; margin: 0 auto; padding: 24px 18px 60px; }
+.topbar, .toolbar, .job-head, .job-actions, .recipient, .files-header, .dialog-header, .dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+h1 { font-size: 22px; margin: 0 0 3px; }
+h2 { font-size: 15px; margin: 0; }
+p { margin: 0; }
+#summary, .muted { color: #8e98a8; font-size: 13px; }
+.status { font-size: 12px; padding: 5px 9px; border-radius: 999px; text-transform: capitalize; }
+.status.ready { background: #123c2b; color: #69dfa7; }
+.status.connecting, .status.authenticated { background: #3d3216; color: #f2ca65; }
+.status.disconnected { background: #421e22; color: #ff9098; }
+.toolbar { margin: 26px 0 10px; }
+.jobs { display: grid; gap: 9px; }
+.job, .recipient { background: #161a20; border: 1px solid #282e38; border-radius: 9px; padding: 12px 14px; }
+.job-title { font-weight: 650; }
+.job-schedule { color: #9ba6b6; font-size: 13px; margin-top: 2px; }
+.job-message { margin: 10px 0; color: #d0d6df; font-size: 13px; white-space: pre-wrap; }
+.file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.file-chip { background: #202630; color: #b9c3d1; border-radius: 5px; padding: 4px 7px; font-size: 12px; }
+.job-actions { justify-content: flex-end; margin-top: 11px; }
+.recipients-title { margin-top: 30px; }
+.recipients { display: grid; gap: 7px; }
+.recipient-name { font-weight: 600; }
+.recipient-number { color: #9ba6b6; font-family: ui-monospace, monospace; font-size: 13px; }
+dialog { width: min(620px, calc(100% - 24px)); border: 1px solid #343a45; border-radius: 10px; padding: 0; background: #161a20; color: #e9edf2; }
+dialog::backdrop { background: rgb(0 0 0 / 65%); }
+dialog form { padding: 16px; }
+.dialog-header { margin-bottom: 16px; }
+label { display: grid; gap: 5px; color: #aeb8c6; font-size: 12px; margin-bottom: 12px; }
+input, select, textarea { width: 100%; border: 1px solid #343a45; border-radius: 6px; background: #101319; color: #edf1f6; padding: 8px 9px; }
+textarea { resize: vertical; }
+.schedule-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; }
+#cron-wrap { grid-column: span 2; }
+.files-header { margin: 5px 0 8px; color: #aeb8c6; font-size: 12px; }
+.button-like { display: block; margin: 0; color: #e9edf2; }
+.job-files { display: grid; gap: 7px; }
+.file-row { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 7px; align-items: center; }
+.file-row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #b9c3d1; }
+.file-row input { padding: 6px 8px; }
+.error { min-height: 18px; color: #ff8d95; font-size: 12px; margin-top: 8px; }
+.dialog-actions { justify-content: flex-end; margin-top: 10px; }
+.toast { position: fixed; right: 18px; bottom: 18px; background: #232934; border: 1px solid #394150; padding: 9px 12px; border-radius: 7px; opacity: 0; pointer-events: none; transition: opacity .2s; font-size: 13px; }
+.toast.show { opacity: 1; }
+.empty { color: #7f8997; font-size: 13px; padding: 16px 2px; }
+@media (max-width: 620px) {
+    .schedule-grid { grid-template-columns: 1fr 1fr; }
+    #cron-wrap { grid-column: span 2; }
+    .file-row { grid-template-columns: 1fr auto; }
+    .file-row input { grid-column: 1 / -1; grid-row: 2; }
+}
