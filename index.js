@@ -1,75 +1,22 @@
-const fs = require('fs');
-const path = require('path');
-const qrcode = require('qrcode-terminal');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { loadConfig } = require('./src/config');
+const { registerJobs } = require('./src/scheduler');
+const { StateStore } = require('./src/state');
+const { createWhatsAppClient } = require('./src/whatsapp');
 
-const client = new Client({
-    authStrategy: new LocalAuth()
-});
+async function main() {
+    const config = loadConfig(process.env.WA_SCHEDULE_CONFIG);
+    const stateStore = new StateStore(process.env.WA_STATE_FILE);
+    const client = createWhatsAppClient();
 
-function normalizeNumber(number) {
-    return number.replace(/[^\d]/g, '');
+    client.once('ready', () => {
+        console.log('WhatsApp ready');
+        registerJobs(client, config, stateStore);
+    });
+
+    await client.initialize();
 }
 
-client.on('qr', (qr) => {
-    console.log('Scan this QR code with WhatsApp:');
-    qrcode.generate(qr, { small: true });
+main().catch((error) => {
+    console.error('wa-scheduler failed to start:', error);
+    process.exitCode = 1;
 });
-
-client.on('authenticated', () => {
-    console.log('WhatsApp authenticated');
-});
-
-client.on('auth_failure', (message) => {
-    console.error('WhatsApp authentication failed:', message);
-});
-
-client.on('ready', async () => {
-    console.log('WhatsApp ready');
-
-    const testNumber = process.env.WA_TEST_NUMBER;
-    const testFile = process.env.WA_TEST_FILE;
-
-    if (!testNumber) {
-        console.log('WA_TEST_NUMBER is not set; skipping test send');
-        return;
-    }
-
-    const chatId = `${normalizeNumber(testNumber)}@c.us`;
-
-    try {
-        if (testFile) {
-            const filePath = path.resolve(testFile);
-
-            if (!fs.existsSync(filePath)) {
-                console.error(`File does not exist: ${filePath}`);
-                return;
-            }
-
-            const media = MessageMedia.fromFilePath(filePath);
-
-            await client.sendMessage(chatId, media, {
-                sendMediaAsDocument: true,
-                caption: process.env.WA_TEST_CAPTION || ''
-            });
-
-            console.log(`Test document sent to ${testNumber}: ${filePath}`);
-            return;
-        }
-
-        await client.sendMessage(
-            chatId,
-            'wa-scheduler test message'
-        );
-
-        console.log(`Test message sent to ${testNumber}`);
-    } catch (error) {
-        console.error('Failed to send test message:', error);
-    }
-});
-
-client.on('disconnected', (reason) => {
-    console.log('WhatsApp disconnected:', reason);
-});
-
-client.initialize();

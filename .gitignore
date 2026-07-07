@@ -7,3 +7,7 @@ node_modules/
 *.txt
 *.iml
 /.idea
+config/schedule.json
+data/
+documents/*
+!documents/.gitkeep

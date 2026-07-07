@@ -1,0 +1,12 @@
+{
+  "timezone": "Europe/Kyiv",
+  "jobs": [
+    {
+      "id": "monday-report",
+      "schedule": "0 8 * * 1",
+      "recipient": "380XXXXXXXXX",
+      "file": "documents/report.pdf",
+      "caption": "Документ"
+    }
+  ]
+}
