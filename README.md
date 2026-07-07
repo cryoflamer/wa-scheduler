@@ -4,16 +4,26 @@ Scheduled WhatsApp document sender built on `whatsapp-web.js`.
 
 ## Setup
 
-Use Node.js 22 or newer, install dependencies, and create the local schedule configuration:
+Use Node.js 22 or newer and install dependencies:
 
 ```bash
-npm install
-cp config/schedule.example.json config/schedule.json
+nvm use
+npm ci
 ```
 
-Edit `config/schedule.json` and place documents under `documents/`. The local schedule, scheduler state, WhatsApp authentication data, and document contents are ignored by Git.
+Create the local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set the real WhatsApp recipient numbers. `.env` is ignored by Git, so personal phone numbers stay local.
+
+Place documents under `documents/`. Document contents, scheduler state, WhatsApp authentication data, and `.env` are ignored by Git.
 
 ## Schedule configuration
+
+The schedule itself is version-controlled in `schedule.json`:
 
 ```json
 {
@@ -22,13 +32,21 @@ Edit `config/schedule.json` and place documents under `documents/`. The local sc
     {
       "id": "monday-report",
       "schedule": "0 8 * * 1",
-      "recipient": "380XXXXXXXXX",
+      "recipient": "${WA_RECIPIENT_SELF}",
       "file": "documents/report.pdf",
       "caption": "Документ"
     }
   ]
 }
 ```
+
+The matching local `.env` contains the private value:
+
+```dotenv
+WA_RECIPIENT_SELF=380XXXXXXXXX
+```
+
+`${VARIABLE}` placeholders can be used in string values in the schedule. Startup fails with a clear error when a referenced environment variable is missing.
 
 Each job id must be unique. `schedule` uses cron syntax and is evaluated in the configured timezone.
 

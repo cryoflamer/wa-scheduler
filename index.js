@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const { loadConfig } = require('./src/config');
 const { registerJobs } = require('./src/scheduler');
 const { StateStore } = require('./src/state');

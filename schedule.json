@@ -4,7 +4,7 @@
     {
       "id": "monday-report",
       "schedule": "0 8 * * 1",
-      "recipient": "380XXXXXXXXX",
+      "recipient": "${WA_RECIPIENT_SELF}",
       "file": "documents/report.pdf",
       "caption": "Документ"
     }
