@@ -17,14 +17,18 @@ function withConfig(config, callback) {
     }
 }
 
-test('schedule configuration is loaded and normalized', () => {
+test('schedule configuration normalizes message and files', () => {
     withConfig({
         timezone: 'Europe/Kyiv',
         jobs: [{
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '+380 66 000 00 00',
-            file: 'documents/report.pdf'
+            message: 'Reports are attached',
+            files: [
+                'documents/report.pdf',
+                { path: 'documents/table.xlsx', caption: 'Appendix 1' }
+            ]
         }]
     }, (configPath) => {
         assert.deepEqual(loadConfig(configPath, {}), {
@@ -33,36 +37,64 @@ test('schedule configuration is loaded and normalized', () => {
                 id: 'report',
                 schedule: '0 8 * * 1',
                 recipient: '+380 66 000 00 00',
-                file: 'documents/report.pdf',
-                caption: ''
+                message: 'Reports are attached',
+                files: [
+                    { path: 'documents/report.pdf', caption: '' },
+                    { path: 'documents/table.xlsx', caption: 'Appendix 1' }
+                ]
             }]
         });
     });
 });
 
-test('environment variables are expanded in schedule values', () => {
+test('legacy single-document configuration is normalized', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report',
+            schedule: '0 8 * * 1',
+            recipient: '380660000000',
+            file: 'documents/report.pdf',
+            caption: 'Report'
+        }]
+    }, (configPath) => {
+        assert.deepEqual(loadConfig(configPath, {}).jobs[0], {
+            id: 'report',
+            schedule: '0 8 * * 1',
+            recipient: '380660000000',
+            message: '',
+            files: [{ path: 'documents/report.pdf', caption: 'Report' }]
+        });
+    });
+});
+
+test('environment variables are expanded in nested schedule values', () => {
     withConfig({
         timezone: 'Europe/Kyiv',
         jobs: [{
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '${WA_RECIPIENT_REPORT}',
-            file: 'documents/${WA_REPORT_FILE}',
-            caption: 'Report for ${WA_REPORT_LABEL}'
+            message: 'Report for ${WA_REPORT_LABEL}',
+            files: [{
+                path: 'documents/${WA_REPORT_FILE}',
+                caption: '${WA_REPORT_CAPTION}'
+            }]
         }]
     }, (configPath) => {
         const config = loadConfig(configPath, {
             WA_RECIPIENT_REPORT: '380660000000',
             WA_REPORT_FILE: 'report.pdf',
-            WA_REPORT_LABEL: 'Monday'
+            WA_REPORT_LABEL: 'Monday',
+            WA_REPORT_CAPTION: 'Appendix'
         });
 
         assert.deepEqual(config.jobs[0], {
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '380660000000',
-            file: 'documents/report.pdf',
-            caption: 'Report for Monday'
+            message: 'Report for Monday',
+            files: [{ path: 'documents/report.pdf', caption: 'Appendix' }]
         });
     });
 });
@@ -74,7 +106,7 @@ test('missing environment variables are rejected', () => {
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '${WA_RECIPIENT_REPORT}',
-            file: 'documents/report.pdf'
+            message: 'Report'
         }]
     }, (configPath) => {
         assert.throws(
@@ -84,12 +116,45 @@ test('missing environment variables are rejected', () => {
     });
 });
 
+test('jobs without message or files are rejected', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report',
+            schedule: '0 8 * * 1',
+            recipient: '380660000000'
+        }]
+    }, (configPath) => {
+        assert.throws(
+            () => loadConfig(configPath, {}),
+            /must define a non-empty message or at least one file/
+        );
+    });
+});
+
+test('duplicate file paths are rejected', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report',
+            schedule: '0 8 * * 1',
+            recipient: '380660000000',
+            files: ['documents/report.pdf', 'documents/report.pdf']
+        }]
+    }, (configPath) => {
+        assert.throws(
+            () => loadConfig(configPath, {}),
+            /contains duplicate file path: documents\/report.pdf/
+        );
+    });
+});
+
 test('duplicate job ids are rejected', () => {
     const job = {
         id: 'report',
         schedule: '0 8 * * 1',
         recipient: '380660000000',
-        file: 'documents/report.pdf'
+        message: 'Report'
     };
 
     withConfig({

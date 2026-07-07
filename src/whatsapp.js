@@ -7,6 +7,10 @@ function normalizeNumber(number) {
     return number.replace(/[^\d]/g, '');
 }
 
+function chatIdFor(recipient) {
+    return `${normalizeNumber(recipient)}@c.us`;
+}
+
 function createWhatsAppClient() {
     const client = new Client({
         authStrategy: new LocalAuth()
@@ -32,19 +36,27 @@ function createWhatsAppClient() {
     return client;
 }
 
-async function sendDocument(client, job) {
-    const filePath = path.resolve(job.file);
+async function sendTextMessage(client, recipient, message) {
+    await client.sendMessage(chatIdFor(recipient), message);
+}
+
+async function sendDocument(client, recipientOrJob, file) {
+    const recipient = file ? recipientOrJob : recipientOrJob.recipient;
+    const document = file || {
+        path: recipientOrJob.file,
+        caption: recipientOrJob.caption || ''
+    };
+    const filePath = path.resolve(document.path);
 
     if (!fs.existsSync(filePath)) {
         throw new Error(`Document does not exist: ${filePath}`);
     }
 
-    const chatId = `${normalizeNumber(job.recipient)}@c.us`;
     const media = MessageMedia.fromFilePath(filePath);
 
-    await client.sendMessage(chatId, media, {
+    await client.sendMessage(chatIdFor(recipient), media, {
         sendMediaAsDocument: true,
-        caption: job.caption
+        caption: document.caption
     });
 
     return filePath;
@@ -53,5 +65,6 @@ async function sendDocument(client, job) {
 module.exports = {
     createWhatsAppClient,
     normalizeNumber,
-    sendDocument
+    sendDocument,
+    sendTextMessage
 };

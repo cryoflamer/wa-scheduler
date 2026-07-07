@@ -25,13 +25,64 @@ class StateStore {
         return Object.prototype.hasOwnProperty.call(this.state, key);
     }
 
+    isComplete(key) {
+        return this.state[key]?.status === 'sent';
+    }
+
+    isMessageSent(key) {
+        return this.state[key]?.message?.status === 'sent';
+    }
+
+    isFileSent(key, filePath) {
+        return this.state[key]?.files?.[filePath]?.status === 'sent';
+    }
+
+    markMessageSent(key, sentAt) {
+        const record = this.ensureJobRecord(key);
+        record.message = {
+            status: 'sent',
+            sentAt
+        };
+        this.persist();
+    }
+
+    markFileSent(key, filePath, sentAt) {
+        const record = this.ensureJobRecord(key);
+        record.files[filePath] = {
+            status: 'sent',
+            sentAt
+        };
+        this.persist();
+    }
+
+    markComplete(key, sentAt) {
+        const record = this.ensureJobRecord(key);
+        record.status = 'sent';
+        record.sentAt = sentAt;
+        this.persist();
+    }
+
+    // Kept for callers and state written by the original single-document scheduler.
     markSent(key, sentAt) {
         this.state[key] = {
             status: 'sent',
             sentAt
         };
-
         this.persist();
+    }
+
+    ensureJobRecord(key) {
+        const current = this.state[key];
+
+        if (!current || typeof current !== 'object' || Array.isArray(current)) {
+            this.state[key] = {};
+        }
+
+        if (!this.state[key].files || typeof this.state[key].files !== 'object') {
+            this.state[key].files = {};
+        }
+
+        return this.state[key];
     }
 
     persist() {

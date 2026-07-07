@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { sendDocument } = require('./whatsapp');
+const { sendDocument, sendTextMessage } = require('./whatsapp');
 
 function dateKey(date, timezone) {
     const parts = new Intl.DateTimeFormat('en', {
@@ -11,6 +11,37 @@ function dateKey(date, timezone) {
     const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
 
     return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function runJob(client, job, stateStore, key, senders = {}) {
+    const sendText = senders.sendText || sendTextMessage;
+    const sendFile = senders.sendFile || sendDocument;
+
+    if (stateStore.isComplete(key)) {
+        console.log(`Job ${job.id} already sent for this date; skipping`);
+        return { status: 'skipped' };
+    }
+
+    if (job.message && !stateStore.isMessageSent(key)) {
+        await sendText(client, job.recipient, job.message);
+        stateStore.markMessageSent(key, new Date().toISOString());
+        console.log(`Job ${job.id} message sent`);
+    }
+
+    for (const file of job.files) {
+        if (stateStore.isFileSent(key, file.path)) {
+            continue;
+        }
+
+        const filePath = await sendFile(client, job.recipient, file);
+        stateStore.markFileSent(key, file.path, new Date().toISOString());
+        console.log(`Job ${job.id} file sent: ${filePath}`);
+    }
+
+    stateStore.markComplete(key, new Date().toISOString());
+    console.log(`Job ${job.id} completed`);
+
+    return { status: 'sent' };
 }
 
 function registerJobs(client, config, stateStore) {
@@ -27,17 +58,8 @@ function registerJobs(client, config, stateStore) {
                 const now = new Date();
                 const key = `${job.id}:${dateKey(now, config.timezone)}`;
 
-                if (stateStore.has(key)) {
-                    console.log(`Job ${job.id} already sent for this date; skipping`);
-                    return;
-                }
-
                 try {
-                    const filePath = await sendDocument(client, job);
-                    const sentAt = new Date().toISOString();
-
-                    stateStore.markSent(key, sentAt);
-                    console.log(`Job ${job.id} sent: ${filePath}`);
+                    await runJob(client, job, stateStore, key);
                 } catch (error) {
                     console.error(`Job ${job.id} failed:`, error);
                 }
@@ -57,5 +79,6 @@ function registerJobs(client, config, stateStore) {
 
 module.exports = {
     dateKey,
-    registerJobs
+    registerJobs,
+    runJob
 };

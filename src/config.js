@@ -30,19 +30,92 @@ function requireExpandedString(value, fieldName, environment) {
     return expandEnvironment(stringValue, fieldName, environment);
 }
 
+function optionalExpandedString(value, fieldName, environment) {
+    if (value === undefined) {
+        return '';
+    }
+
+    if (typeof value !== 'string') {
+        throw new Error(`${fieldName} must be a string`);
+    }
+
+    return expandEnvironment(value, fieldName, environment);
+}
+
+function normalizeFile(file, fieldName, environment) {
+    if (typeof file === 'string') {
+        return {
+            path: requireExpandedString(file, fieldName, environment),
+            caption: ''
+        };
+    }
+
+    if (!file || typeof file !== 'object' || Array.isArray(file)) {
+        throw new Error(`${fieldName} must be a string or an object`);
+    }
+
+    return {
+        path: requireExpandedString(file.path, `${fieldName}.path`, environment),
+        caption: optionalExpandedString(file.caption, `${fieldName}.caption`, environment)
+    };
+}
+
+function normalizeFiles(job, index, environment) {
+    if (job.files !== undefined && job.file !== undefined) {
+        throw new Error(`jobs[${index}] cannot define both file and files`);
+    }
+
+    let files;
+
+    if (job.files !== undefined) {
+        if (!Array.isArray(job.files)) {
+            throw new Error(`jobs[${index}].files must be an array`);
+        }
+
+        files = job.files.map((file, fileIndex) => normalizeFile(
+            file,
+            `jobs[${index}].files[${fileIndex}]`,
+            environment
+        ));
+    } else if (job.file !== undefined) {
+        files = [{
+            path: requireExpandedString(job.file, `jobs[${index}].file`, environment),
+            caption: optionalExpandedString(job.caption, `jobs[${index}].caption`, environment)
+        }];
+    } else {
+        files = [];
+    }
+
+    const paths = new Set();
+
+    for (const file of files) {
+        if (paths.has(file.path)) {
+            throw new Error(`jobs[${index}] contains duplicate file path: ${file.path}`);
+        }
+        paths.add(file.path);
+    }
+
+    return files;
+}
+
 function validateJob(job, index, environment) {
     if (!job || typeof job !== 'object' || Array.isArray(job)) {
         throw new Error(`jobs[${index}] must be an object`);
+    }
+
+    const message = optionalExpandedString(job.message, `jobs[${index}].message`, environment);
+    const files = normalizeFiles(job, index, environment);
+
+    if (message.trim() === '' && files.length === 0) {
+        throw new Error(`jobs[${index}] must define a non-empty message or at least one file`);
     }
 
     return {
         id: requireExpandedString(job.id, `jobs[${index}].id`, environment),
         schedule: requireExpandedString(job.schedule, `jobs[${index}].schedule`, environment),
         recipient: requireExpandedString(job.recipient, `jobs[${index}].recipient`, environment),
-        file: requireExpandedString(job.file, `jobs[${index}].file`, environment),
-        caption: typeof job.caption === 'string'
-            ? expandEnvironment(job.caption, `jobs[${index}].caption`, environment)
-            : ''
+        message,
+        files
     };
 }
 

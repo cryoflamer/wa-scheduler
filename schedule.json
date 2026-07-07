@@ -5,8 +5,14 @@
       "id": "monday-report",
       "schedule": "0 8 * * 1",
       "recipient": "${WA_RECIPIENT_SELF}",
-      "file": "documents/report.pdf",
-      "caption": "Документ"
+      "message": "Доброго ранку. Надсилаю документи за понеділок.",
+      "files": [
+        "documents/report.pdf",
+        {
+          "path": "documents/table.xlsx",
+          "caption": "Додаток 1"
+        }
+      ]
     }
   ]
 }
