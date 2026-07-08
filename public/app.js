@@ -32,6 +32,10 @@ function lastRunLabel(lastRun) {
 async function api(url, options = {}) {
     const response = await fetch(url, options);
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+        location.replace('/login');
+        throw new Error(data.error || 'Authentication required');
+    }
     if (!response.ok) throw new Error(data.error || `Request failed: ${response.status}`);
     return data;
 }
@@ -362,6 +366,9 @@ async function refresh() {
     $('#wa-status').textContent = status.whatsapp;
     $('#wa-status').className = `status ${status.whatsapp}`;
     $('#activity-retention').textContent = `Keeping ${status.activityRetentionDays} days`;
+    $('#sign-out').hidden = !status.uiAuthEnabled;
+    $('#ui-auth-status').hidden = status.uiAuthEnabled;
+    $('#ui-auth-status').textContent = status.uiAuthEnabled ? '' : 'UI access · No password';
     renderJobs();
     renderRecipients();
     renderNotifications();
@@ -632,6 +639,15 @@ refresh().catch((error) => toast(error.message));
 $('#activity-filter').addEventListener('change', async (event) => {
     state.activityFilter = event.target.value;
     try { await loadActivity(); } catch (error) { toast(error.message); }
+});
+
+$('#sign-out').addEventListener('click', async () => {
+    try {
+        await api('/api/auth/logout', { method: 'POST' });
+        location.replace('/login');
+    } catch (error) {
+        toast(error.message);
+    }
 });
 
 $('#clear-activity').addEventListener('click', async () => {

@@ -56,3 +56,9 @@ test('cron is generated and read-only outside advanced schedule mode', () => {
     assert.match(app, /monthday'\)\.addEventListener\('input', updateCronPreview\)/);
     assert.match(app, /schedule-time'\)\.addEventListener\('input', updateCronPreview\)/);
 });
+
+test('dashboard redirects to login when an authenticated API session expires', () => {
+    assert.match(app, /response\.status === 401/);
+    assert.match(app, /location\.replace\('\/login'\)/);
+    assert.match(html, /id="sign-out"/);
+});

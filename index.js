@@ -8,6 +8,7 @@ const { StateStore } = require('./src/state');
 const { createShutdownHandler, createWhatsAppDisconnectHandler } = require('./src/runtime');
 const { createWhatsAppClient } = require('./src/whatsapp');
 const { createWebServer } = require('./src/web/server');
+const { ensureUiAuthConfig } = require('./src/web/auth');
 const crypto = require('crypto');
 
 async function main() {
@@ -30,6 +31,11 @@ async function main() {
     const status = { whatsapp: 'connecting', startedAt: new Date().toISOString() };
     const host = process.env.WA_UI_HOST || '127.0.0.1';
     const port = Number(process.env.WA_UI_PORT || 3000);
+    const uiAuth = ensureUiAuthConfig();
+
+    if (!uiAuth.enabled) {
+        activity.error('ui.auth.disabled', { message: 'UI password protection is disabled' });
+    }
 
     client.on('authenticated', () => {
         status.whatsapp = 'authenticated';
@@ -51,7 +57,8 @@ async function main() {
         configPath,
         status,
         activity,
-        notificationManager
+        notificationManager,
+        uiAuth
     });
 
     const server = app.listen(port, host, () => {

@@ -673,3 +673,81 @@ test('manual failure notifications use the immutable run snapshot after a concur
     assert.equal(notificationContext.context.job.message, 'Original message');
     assert.notEqual(notificationContext.context.job.message, loadConfig(configPath).jobs[0].message);
 });
+
+test('UI authentication protects dashboard, API, and activity stream and supports logout', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-auth-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({ timezone: 'Europe/Kyiv', jobs: [] }));
+    const activity = new ActivityLog(path.join(directory, 'activity.jsonl'));
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager, configPath,
+        status: { whatsapp: 'ready' }, activity,
+        uiAuth: { enabled: true, password: 'local-secret' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+
+    const dashboard = await fetch(`${base}/`, { redirect: 'manual' });
+    assert.equal(dashboard.status, 303);
+    assert.equal(dashboard.headers.get('location'), '/login');
+    const blockedApi = await fetch(`${base}/api/jobs`);
+    assert.equal(blockedApi.status, 401);
+    const blockedStream = await fetch(`${base}/api/activity/stream`);
+    assert.equal(blockedStream.status, 401);
+
+    const bad = await fetch(`${base}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'bad' })
+    });
+    assert.equal(bad.status, 401);
+
+    const login = await fetch(`${base}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'local-secret' })
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const jobs = await fetch(`${base}/api/jobs`, { headers: { Cookie: cookie } });
+    assert.equal(jobs.status, 200);
+
+    const logout = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { Cookie: cookie } });
+    assert.equal(logout.status, 200);
+    const afterLogout = await fetch(`${base}/api/jobs`, { headers: { Cookie: cookie } });
+    assert.equal(afterLogout.status, 401);
+
+    const types = activity.list({ limit: 10 }).map((event) => event.type);
+    assert.ok(types.includes('ui.auth.failed'));
+    assert.ok(types.includes('ui.auth.signed_in'));
+    assert.ok(types.includes('ui.auth.signed_out'));
+});
+
+test('UI authentication can be explicitly disabled', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-auth-disabled-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({ timezone: 'Europe/Kyiv', jobs: [] }));
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager, configPath,
+        status: { whatsapp: 'ready' },
+        uiAuth: { enabled: false, password: '' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/status`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.uiAuthEnabled, false);
+});

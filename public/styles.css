@@ -129,3 +129,5 @@ textarea { resize: vertical; }
 .retry-grid label { margin-bottom: 0; position: relative; }
 .input-suffix { color: #7f8997; font-size: 11px; margin-top: -2px; }
 @media (max-width: 620px) { .retry-grid { grid-template-columns: 1fr; } }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.ui-auth-status { color: #f2ca65; font-size: 12px; }

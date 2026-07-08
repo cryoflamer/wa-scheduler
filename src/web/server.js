@@ -21,6 +21,7 @@ const { runJob } = require('../scheduler');
 const { safeErrorMessage } = require('../activity');
 const { loadEnvValue, maskSecret, saveEnvValue } = require('../env');
 const { sendTextMessage } = require('../whatsapp');
+const { createUiAuth, loginPagePath } = require('./auth');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 const NTFY_TOPIC_KEY = 'WA_NTFY_TOPIC';
@@ -262,11 +263,13 @@ function createWebServer(options) {
         envPath = '.env',
         status,
         activity,
-        notificationManager
+        notificationManager,
+        uiAuth: uiAuthConfig = { enabled: false, password: '' }
     } = options;
     const app = express();
     const upload = createUpload();
     const streams = new Set();
+    const uiAuth = createUiAuth({ ...uiAuthConfig, activity });
 
     function applyConfig(config) {
         schedulerManager.apply(config);
@@ -281,7 +284,24 @@ function createWebServer(options) {
     };
 
     app.use(express.json({ limit: '1mb' }));
+
+    app.get('/login', (request, response) => {
+        if (!uiAuth.enabled || uiAuth.isAuthenticated(request)) return response.redirect(303, '/');
+        return response.sendFile(loginPagePath());
+    });
+
+    app.post('/api/auth/login', (request, response) => {
+        const result = uiAuth.signIn(request, response, String(request.body?.password || ''));
+        return response.status(result.ok ? 200 : result.status).json(result);
+    });
+
+    app.use(uiAuth.middleware);
     app.use(express.static(path.resolve('public')));
+
+    app.post('/api/auth/logout', (request, response) => {
+        uiAuth.signOut(request, response);
+        response.json({ ok: true });
+    });
 
     app.get('/api/activity', (request, response) => {
         if (!activity) return response.json([]);
@@ -324,7 +344,8 @@ function createWebServer(options) {
             jobs: schedulerManager.config?.jobs.length || 0,
             activeJobs: schedulerManager.tasks.length,
             startedAt: status.startedAt || null,
-            activityRetentionDays: activity?.retentionDays || 30
+            activityRetentionDays: activity?.retentionDays || 30,
+            uiAuthEnabled: uiAuth.enabled
         });
     });
 
