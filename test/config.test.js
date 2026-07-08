@@ -24,6 +24,7 @@ test('schedule configuration normalizes message and files', () => {
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '+380 66 000 00 00',
+            enabled: true,
             message: 'Reports are attached',
             files: [
                 'documents/report.pdf',
@@ -37,6 +38,7 @@ test('schedule configuration normalizes message and files', () => {
                 id: 'report',
                 schedule: '0 8 * * 1',
                 recipient: '+380 66 000 00 00',
+                enabled: true,
                 message: 'Reports are attached',
                 files: [
                     { path: 'documents/report.pdf', caption: '' },
@@ -62,6 +64,7 @@ test('legacy single-document configuration is normalized', () => {
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '380660000000',
+            enabled: true,
             message: '',
             files: [{ path: 'documents/report.pdf', caption: 'Report' }]
         });
@@ -93,6 +96,7 @@ test('environment variables are expanded in nested schedule values', () => {
             id: 'report',
             schedule: '0 8 * * 1',
             recipient: '380660000000',
+            enabled: true,
             message: 'Report for Monday',
             files: [{ path: 'documents/report.pdf', caption: 'Appendix' }]
         });
@@ -162,5 +166,28 @@ test('duplicate job ids are rejected', () => {
         jobs: [job, job]
     }, (configPath) => {
         assert.throws(() => loadConfig(configPath, {}), /Duplicate job id: report/);
+    });
+});
+
+test('jobs are enabled by default and accept an explicit disabled flag', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [
+            { id: 'enabled', schedule: '0 8 * * *', recipient: '380660000000', message: 'One' },
+            { id: 'disabled', schedule: '0 9 * * *', recipient: '380660000000', enabled: false, message: 'Two' }
+        ]
+    }, (configPath) => {
+        const jobs = loadConfig(configPath, {}).jobs;
+        assert.equal(jobs[0].enabled, true);
+        assert.equal(jobs[1].enabled, false);
+    });
+});
+
+test('job enabled flag must be boolean', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{ id: 'report', schedule: '0 8 * * *', recipient: '380660000000', enabled: 'yes', message: 'Report' }]
+    }, (configPath) => {
+        assert.throws(() => loadConfig(configPath, {}), /jobs\[0\]\.enabled must be a boolean/);
     });
 });

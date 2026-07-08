@@ -38,6 +38,7 @@ async function runJob(client, job, stateStore, key, senders = {}, activity = nul
         return { status: 'skipped' };
     }
 
+    stateStore.markRunStarted(key, new Date().toISOString());
     report(activity, 'info', 'job.started', {
         jobId: job.id,
         message: 'Job started'
@@ -86,6 +87,14 @@ function registerJobs(client, config, stateStore, activity = null) {
     const tasks = [];
 
     for (const job of config.jobs) {
+        if (!job.enabled) {
+            report(activity, 'info', 'job.disabled', {
+                jobId: job.id,
+                message: 'Job disabled'
+            }, `Job ${job.id} disabled`);
+            continue;
+        }
+
         const task = cron.schedule(
             job.schedule,
             async () => {
@@ -95,6 +104,7 @@ function registerJobs(client, config, stateStore, activity = null) {
                 try {
                     await runJob(client, job, stateStore, key, {}, activity);
                 } catch (error) {
+                    stateStore.markRunFailed(key, new Date().toISOString());
                     report(activity, 'error', 'job.failed', {
                         jobId: job.id,
                         error
@@ -107,7 +117,7 @@ function registerJobs(client, config, stateStore, activity = null) {
             }
         );
 
-        tasks.push(task);
+        tasks.push({ jobId: job.id, task });
         report(activity, 'info', 'job.scheduled', {
             jobId: job.id,
             message: `Scheduled: ${job.schedule} (${config.timezone})`
@@ -133,8 +143,12 @@ class SchedulerManager {
         this.config = config;
     }
 
+    getNextRun(jobId) {
+        return this.tasks.find((entry) => entry.jobId === jobId)?.task.getNextRun() || null;
+    }
+
     stop() {
-        for (const task of this.tasks) {
+        for (const { task } of this.tasks) {
             task.destroy();
         }
         this.tasks = [];

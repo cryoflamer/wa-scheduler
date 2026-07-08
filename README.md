@@ -109,3 +109,30 @@ Files selected in the job editor are copied into `documents/` and schedule entri
 The dashboard also contains a persistent Activity panel. Structured runtime events are appended to `data/activity.jsonl` and streamed live to the browser with Server-Sent Events. The latest 100 events are shown by default and can be filtered by jobs, WhatsApp, or errors, or cleared from the UI. Activity events record job ids and document basenames but do not include recipient phone numbers, message bodies, captions, or absolute local paths.
 
 The UI binds to `127.0.0.1` by default. `WA_UI_HOST` and `WA_UI_PORT` can override the bind address and port when needed.
+
+## Operational status and job controls
+
+Jobs are enabled by default. Set `"enabled": false` in `schedule.json`, or use the dashboard **Enable / Disable** button, to pause a job without deleting it. Disabled jobs are kept in the configuration but are not registered with the scheduler.
+
+Each job card shows its next scheduled run and the latest scheduled run status. A failed run that already sent some items is shown as partial, including the number of completed items. Manual **Send now** executions remain separate from scheduled-run history.
+
+The dashboard header shows the number of active jobs and the time when the current wa-scheduler process started.
+
+## User service
+
+On Linux systems with a working systemd user manager, wa-scheduler can run without an open terminal and restart after a process failure:
+
+```bash
+npm run service:install
+npm run service:status
+```
+
+The installer generates `~/.config/systemd/user/wa-scheduler.service` from the current project path and the active Node.js executable, then enables and starts it. No home directory or NVM version is hardcoded in the repository.
+
+To stop and remove the generated user service:
+
+```bash
+npm run service:remove
+```
+
+The service starts wa-scheduler when the systemd user manager starts. On WSL, this does not itself launch the WSL distribution from a fully stopped Windows session; WSL/systemd must be running for the Linux user service to run.

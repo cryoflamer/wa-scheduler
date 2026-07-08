@@ -80,19 +80,30 @@ function recipientKey(value) {
     return String(value || '').match(RECIPIENT_PATTERN)?.[1] || '';
 }
 
-function serializeJob(job) {
+function serializeJob(job, runtime = {}) {
     const files = Array.isArray(job.files)
         ? job.files.map((file) => typeof file === 'string' ? { path: file, caption: '' } : file)
         : job.file
             ? [{ path: job.file, caption: job.caption || '' }]
             : [];
 
+    const normalizedJob = runtime.normalizedJob || { ...job, files, message: job.message || '' };
+    const nextRun = typeof runtime.schedulerManager?.getNextRun === 'function'
+        ? runtime.schedulerManager.getNextRun(job.id)
+        : null;
+    const lastRun = typeof runtime.stateStore?.getLatestScheduledRun === 'function'
+        ? runtime.stateStore.getLatestScheduledRun(normalizedJob)
+        : null;
+
     return {
         id: job.id,
         schedule: job.schedule,
+        enabled: job.enabled !== false,
         recipientKey: recipientKey(job.recipient),
         message: job.message || '',
-        files
+        files,
+        nextRun: nextRun ? nextRun.toISOString() : null,
+        lastRun
     };
 }
 
@@ -119,6 +130,7 @@ function jobFromBody(body) {
         id,
         schedule,
         recipient: `\${${recipient}}`,
+        enabled: body.enabled !== false,
         message,
         files
     };
@@ -185,13 +197,23 @@ function createWebServer(options) {
         response.json({
             whatsapp: status.whatsapp,
             timezone: schedulerManager.config?.timezone || null,
-            jobs: schedulerManager.config?.jobs.length || 0
+            jobs: schedulerManager.config?.jobs.length || 0,
+            activeJobs: schedulerManager.tasks.length,
+            startedAt: status.startedAt || null
         });
     });
 
     app.get('/api/jobs', (_request, response) => {
         const raw = loadRawConfig(configPath);
-        response.json({ timezone: raw.timezone, jobs: raw.jobs.map(serializeJob) });
+        const normalized = loadConfig(configPath, process.env);
+        response.json({
+            timezone: raw.timezone,
+            jobs: raw.jobs.map((job, index) => serializeJob(job, {
+                schedulerManager,
+                stateStore,
+                normalizedJob: normalized.jobs[index]
+            }))
+        });
     });
 
     app.post('/api/jobs', (request, response) => {
@@ -225,6 +247,22 @@ function createWebServer(options) {
         }
     });
 
+
+    app.post('/api/jobs/:id/toggle', (request, response) => {
+        try {
+            const raw = loadRawConfig(configPath);
+            const job = raw.jobs.find((candidate) => candidate.id === request.params.id);
+            if (!job) return response.status(404).json({ error: 'Job not found' });
+            job.enabled = job.enabled === false;
+            const normalized = normalizeConfig(raw, process.env);
+            saveRawConfig(raw, configPath);
+            schedulerManager.apply(normalized);
+            return response.json({ ok: true, enabled: job.enabled });
+        } catch (error) {
+            return sendJsonError(response, error, activity);
+        }
+    });
+
     app.delete('/api/jobs/:id', (request, response) => {
         try {
             const raw = loadRawConfig(configPath);
@@ -242,21 +280,17 @@ function createWebServer(options) {
     });
 
     app.post('/api/jobs/:id/send', async (request, response) => {
+        let key = null;
         try {
-            if (status.whatsapp !== 'ready') {
-                throw new Error('WhatsApp is not ready');
-            }
-
+            if (status.whatsapp !== 'ready') throw new Error('WhatsApp is not ready');
             const config = loadConfig(configPath, process.env);
             const job = config.jobs.find((candidate) => candidate.id === request.params.id);
-            if (!job) {
-                return response.status(404).json({ error: 'Job not found' });
-            }
-
-            const key = `manual:${job.id}:${crypto.randomUUID()}`;
+            if (!job) return response.status(404).json({ error: 'Job not found' });
+            key = `manual:${job.id}:${crypto.randomUUID()}`;
             await runJob(client, job, stateStore, key, {}, activity);
             return response.json({ ok: true });
         } catch (error) {
+            if (key) stateStore.markRunFailed(key, new Date().toISOString());
             return sendJsonError(response, error, activity);
         }
     });

@@ -11,6 +11,14 @@ function requireNonEmptyString(value, fieldName) {
     return value;
 }
 
+function requireBoolean(value, fieldName) {
+    if (typeof value !== 'boolean') {
+        throw new Error(`${fieldName} must be a boolean`);
+    }
+
+    return value;
+}
+
 function expandEnvironment(value, fieldName, environment) {
     return value.replace(ENVIRONMENT_VARIABLE_PATTERN, (_, variableName) => {
         const resolved = environment[variableName];
@@ -114,6 +122,7 @@ function validateJob(job, index, environment) {
         id: requireExpandedString(job.id, `jobs[${index}].id`, environment),
         schedule: requireExpandedString(job.schedule, `jobs[${index}].schedule`, environment),
         recipient: requireExpandedString(job.recipient, `jobs[${index}].recipient`, environment),
+        enabled: job.enabled === undefined ? true : requireBoolean(job.enabled, `jobs[${index}].enabled`),
         message,
         files
     };

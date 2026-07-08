@@ -14,7 +14,7 @@ async function main() {
     const stateStore = new StateStore(process.env.WA_STATE_FILE);
     const client = createWhatsAppClient(activity);
     const schedulerManager = new SchedulerManager(client, stateStore, activity);
-    const status = { whatsapp: 'connecting' };
+    const status = { whatsapp: 'connecting', startedAt: new Date().toISOString() };
     const host = process.env.WA_UI_HOST || '127.0.0.1';
     const port = Number(process.env.WA_UI_PORT || 3000);
 

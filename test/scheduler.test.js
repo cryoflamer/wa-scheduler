@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { dateKey, runJob } = require('../src/scheduler');
+const { dateKey, registerJobs, runJob } = require('../src/scheduler');
 const { StateStore } = require('../src/state');
 
 function withState(callback) {
@@ -158,4 +158,21 @@ test('job execution emits structured activity without recipient or message conte
         assert.equal(serialized.includes('Private caption'), false);
         assert.equal(serialized.includes('report.pdf'), true);
     });
+});
+
+test('disabled jobs are not registered', () => {
+    const tasks = registerJobs({}, {
+        timezone: 'Europe/Kyiv',
+        jobs: [
+            { id: 'enabled', enabled: true, schedule: '0 8 * * *', recipient: '380660000000', message: 'One', files: [] },
+            { id: 'disabled', enabled: false, schedule: '0 9 * * *', recipient: '380660000000', message: 'Two', files: [] }
+        ]
+    }, { isComplete: () => false });
+
+    try {
+        assert.equal(tasks.length, 1);
+        assert.equal(tasks[0].jobId, 'enabled');
+    } finally {
+        for (const { task } of tasks) task.destroy();
+    }
 });

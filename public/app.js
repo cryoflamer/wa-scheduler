@@ -7,6 +7,22 @@ const recipientDialog = $('#recipient-dialog');
 const activityEl = $('#activity');
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+function formatDateTime(value) {
+    if (!value) return '';
+    return new Intl.DateTimeFormat([], {
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    }).format(new Date(value));
+}
+
+function lastRunLabel(lastRun) {
+    if (!lastRun) return 'Last: never';
+    const status = lastRun.status === 'sent' ? 'Completed'
+        : lastRun.status === 'partial' ? `Partial · ${lastRun.sentItems}/${lastRun.totalItems} items`
+            : lastRun.status === 'failed' ? 'Failed'
+                : lastRun.status === 'running' ? 'Running' : lastRun.status;
+    return `Last: ${status} · ${formatDateTime(lastRun.timestamp || `${lastRun.date}T00:00:00`)}`;
+}
+
 async function api(url, options = {}) {
     const response = await fetch(url, options);
     const data = await response.json().catch(() => ({}));
@@ -78,17 +94,19 @@ async function loadActivity() {
 
 function renderJobs() {
     jobsEl.innerHTML = state.jobs.length ? state.jobs.map((job) => `
-        <article class="job">
+        <article class="job ${job.enabled ? '' : 'disabled'}">
             <div class="job-head">
                 <div>
-                    <div class="job-title">${escapeHtml(job.id)}</div>
+                    <div class="job-title">${escapeHtml(job.id)} ${job.enabled ? '' : '<span class="paused">Paused</span>'}</div>
                     <div class="job-schedule">${escapeHtml(scheduleLabel(job.schedule))} · ${escapeHtml(job.recipientKey.replace('WA_RECIPIENT_', ''))}</div>
+                    <div class="job-runtime">${job.enabled && job.nextRun ? `Next: ${escapeHtml(formatDateTime(job.nextRun))}` : 'Next: paused'} · ${escapeHtml(lastRunLabel(job.lastRun))}</div>
                 </div>
             </div>
             ${job.message ? `<div class="job-message">${escapeHtml(job.message)}</div>` : ''}
             <div class="file-list">${job.files.map((file) => `<span class="file-chip">${escapeHtml(file.path.split('/').pop())}${file.caption ? ` · ${escapeHtml(file.caption)}` : ''}</span>`).join('')}</div>
             <div class="job-actions">
                 <button data-send="${escapeHtml(job.id)}">Send now</button>
+                <button data-toggle="${escapeHtml(job.id)}">${job.enabled ? 'Disable' : 'Enable'}</button>
                 <button data-edit="${escapeHtml(job.id)}">Edit</button>
                 <button class="danger" data-delete="${escapeHtml(job.id)}">Delete</button>
             </div>
@@ -112,7 +130,8 @@ async function refresh() {
     state.jobs = jobs.jobs;
     state.timezone = jobs.timezone;
     state.recipients = recipients;
-    $('#summary').textContent = `${jobs.jobs.length} job${jobs.jobs.length === 1 ? '' : 's'} · ${jobs.timezone}`;
+    const since = status.startedAt ? ` · running since ${formatDateTime(status.startedAt)}` : '';
+    $('#summary').textContent = `${status.activeJobs}/${jobs.jobs.length} active · ${jobs.timezone}${since}`;
     $('#wa-status').textContent = status.whatsapp;
     $('#wa-status').className = `status ${status.whatsapp}`;
     renderJobs();
@@ -170,6 +189,7 @@ function openJob(job = null) {
     $('#original-id').value = job?.id || '';
     $('#job-title').textContent = job ? 'Edit job' : 'Add job';
     $('#job-id').value = job?.id || '';
+    $('#job-enabled').checked = job?.enabled !== false;
     $('#job-message').value = job?.message || '';
     renderRecipientOptions(job?.recipientKey || '');
     state.editingFiles = structuredClone(job?.files || []);
@@ -204,6 +224,15 @@ document.addEventListener('click', async (event) => {
         event.target.disabled = true;
         try { await api(`/api/jobs/${encodeURIComponent(event.target.dataset.send)}/send`, { method: 'POST' }); toast('Job sent'); }
         catch (error) { toast(error.message); }
+        finally { event.target.disabled = false; }
+    }
+    if (event.target.dataset.toggle) {
+        event.target.disabled = true;
+        try {
+            const result = await api(`/api/jobs/${encodeURIComponent(event.target.dataset.toggle)}/toggle`, { method: 'POST' });
+            await refresh();
+            toast(result.enabled ? 'Job enabled' : 'Job disabled');
+        } catch (error) { toast(error.message); }
         finally { event.target.disabled = false; }
     }
     if (event.target.dataset.delete && confirm(`Delete ${event.target.dataset.delete}?`)) {
@@ -244,6 +273,7 @@ $('#job-form').addEventListener('submit', async (event) => {
     const originalId = $('#original-id').value;
     const body = {
         id: $('#job-id').value,
+        enabled: $('#job-enabled').checked,
         schedule: formToCron(),
         recipientKey: $('#job-recipient').value,
         message: $('#job-message').value,

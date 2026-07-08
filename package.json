@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "start": "node index.js"
+    "start": "node index.js",
+    "service:install": "node scripts/service.js install",
+    "service:status": "node scripts/service.js status",
+    "service:remove": "node scripts/service.js remove"
   },
   "keywords": [],
   "author": "",

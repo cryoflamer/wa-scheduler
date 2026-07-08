@@ -92,3 +92,8 @@ textarea { resize: vertical; }
     .activity-row { grid-template-columns: 55px 9px 1fr; padding: 9px 10px; gap: 8px; }
     .activity-tools select { min-width: 96px; }
 }
+.job-runtime { color: #7f8997; font-size: 12px; margin-top: 4px; }
+.job.disabled { opacity: .72; }
+.paused { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: #3d3216; color: #f2ca65; font-size: 10px; font-weight: 600; vertical-align: 2px; }
+.enabled-field { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
+.enabled-field input { width: auto; margin: 0; }
