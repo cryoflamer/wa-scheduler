@@ -165,7 +165,7 @@ test('the last local job can be deleted', async (t) => {
     assert.deepEqual(schedulerManager.config.jobs, []);
 });
 
-test('notification API masks ntfy topic and persists local notification settings', async (t) => {
+test('notification API preserves an existing ntfy topic and persists local notification settings', async (t) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-notifications-'));
     const configPath = path.join(directory, 'schedule.json');
     const envPath = path.join(directory, '.env');
@@ -210,7 +210,7 @@ test('notification API masks ntfy topic and persists local notification settings
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             whatsapp: { enabled: true, recipientKey: 'WA_RECIPIENT_SELF', events: ['job.completed', 'job.failed'], includeMessage: true },
-            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'new-secret-topic', events: ['job.failed', 'whatsapp.disconnected'], includeMessage: false }
+            ntfy: { enabled: true, server: 'https://ntfy.sh', events: ['job.failed', 'whatsapp.disconnected'], includeMessage: false }
         })
     });
 
@@ -220,9 +220,105 @@ test('notification API masks ntfy topic and persists local notification settings
     assert.equal(raw.notifications.whatsapp.includeMessage, true);
     assert.equal(raw.notifications.ntfy.topic, '${WA_NTFY_TOPIC}');
     assert.equal(raw.notifications.ntfy.includeMessage, false);
-    assert.match(fs.readFileSync(envPath, 'utf8'), /WA_NTFY_TOPIC=new-secret-topic/);
-    assert.equal(applied.at(-1).ntfy.topic, 'new-secret-topic');
+    assert.match(fs.readFileSync(envPath, 'utf8'), /WA_NTFY_TOPIC=old-private-topic/);
+    assert.equal(applied.at(-1).ntfy.topic, 'old-private-topic');
     assert.equal(applied.at(-1).whatsapp.includeMessage, true);
+});
+
+test('enabling ntfy generates a secure topic when none exists', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-ntfy-generate-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const envPath = path.join(directory, '.env');
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: { enabled: false, recipient: '', events: [] },
+            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: [] }
+        },
+        jobs: []
+    }));
+    delete process.env.WA_NTFY_TOPIC;
+
+    const applied = [];
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager,
+        notificationManager: { apply(config) { applied.push(config); } },
+        configPath, envPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_NTFY_TOPIC;
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            whatsapp: { enabled: false, recipientKey: '', events: [] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', events: ['job.failed'] }
+        })
+    });
+    const body = await response.json();
+    const env = fs.readFileSync(envPath, 'utf8');
+    const topic = env.match(/^WA_NTFY_TOPIC=(.+)$/m)?.[1];
+
+    assert.equal(response.status, 200);
+    assert.match(topic, /^wa-scheduler-[0-9a-f]{36}$/);
+    assert.equal(body.ntfy.topicConfigured, true);
+    assert.doesNotMatch(JSON.stringify(body), new RegExp(topic));
+    assert.equal(applied.at(-1).ntfy.topic, topic);
+    assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).notifications.ntfy.topic, '${WA_NTFY_TOPIC}');
+});
+
+test('ntfy topic regeneration replaces the secret only after an explicit API action', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-ntfy-regenerate-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const envPath = path.join(directory, '.env');
+    const activity = new ActivityLog(path.join(directory, 'activity.jsonl'));
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: { enabled: false, recipient: '', events: [] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: [] }
+        },
+        jobs: []
+    }));
+    fs.writeFileSync(envPath, 'WA_NTFY_TOPIC=old-private-topic\n');
+    process.env.WA_NTFY_TOPIC = 'old-private-topic';
+
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager,
+        notificationManager: { apply() {} }, configPath, envPath,
+        status: { whatsapp: 'ready' }, activity
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_NTFY_TOPIC;
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications/ntfy/topic/regenerate`, { method: 'POST' });
+    const body = await response.json();
+    const topic = fs.readFileSync(envPath, 'utf8').match(/^WA_NTFY_TOPIC=(.+)$/m)?.[1];
+
+    assert.equal(response.status, 200);
+    assert.match(topic, /^wa-scheduler-[0-9a-f]{36}$/);
+    assert.notEqual(topic, 'old-private-topic');
+    assert.equal(body.topicConfigured, true);
+    assert.doesNotMatch(JSON.stringify(body), new RegExp(topic));
+    assert.equal(schedulerManager.config.notifications.ntfy.topic, topic);
+    const events = activity.list({ limit: 10 });
+    assert.equal(events[0].type, 'notification.ntfy_topic.regenerated');
+    assert.doesNotMatch(JSON.stringify(events), new RegExp(topic));
 });
 
 test('notification test API delegates to the selected provider', async (t) => {

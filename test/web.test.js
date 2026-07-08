@@ -72,3 +72,13 @@ test('UI job serialization includes retry policy', () => {
     });
     assert.deepEqual(raw.retry, { attempts: 4, delayMinutes: 15 });
 });
+
+test('generated ntfy topics use a long random wa-scheduler namespace', () => {
+    const { generateNtfyTopic } = require('../src/web/server');
+    const first = generateNtfyTopic();
+    const second = generateNtfyTopic();
+
+    assert.match(first, /^wa-scheduler-[0-9a-f]{36}$/);
+    assert.match(second, /^wa-scheduler-[0-9a-f]{36}$/);
+    assert.notEqual(first, second);
+});

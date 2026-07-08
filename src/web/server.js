@@ -24,6 +24,17 @@ const { sendTextMessage } = require('../whatsapp');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 const NTFY_TOPIC_KEY = 'WA_NTFY_TOPIC';
+const NTFY_TOPIC_PREFIX = 'wa-scheduler-';
+
+function generateNtfyTopic() {
+    return `${NTFY_TOPIC_PREFIX}${crypto.randomBytes(18).toString('hex')}`;
+}
+
+function ensureNtfyTopic(envPath = '.env') {
+    const current = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
+    if (current) return current;
+    return saveEnvValue(NTFY_TOPIC_KEY, generateNtfyTopic(), envPath);
+}
 const NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
@@ -202,16 +213,14 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
     const whatsapp = body.whatsapp || {};
     const ntfy = body.ntfy || {};
     const recipient = String(whatsapp.recipientKey || '').trim();
-    const topic = String(ntfy.topic || '').trim();
     const currentTopic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
 
     if (whatsapp.enabled && !recipient.startsWith('WA_RECIPIENT_')) {
         throw new Error('Select a WhatsApp notification recipient');
     }
-    if (ntfy.enabled && !topic && !currentTopic) {
-        throw new Error('Enter an ntfy topic');
+    if (ntfy.enabled && !currentTopic) {
+        ensureNtfyTopic(envPath);
     }
-    if (topic) saveEnvValue(NTFY_TOPIC_KEY, topic, envPath);
 
     return {
         version: 4,
@@ -337,6 +346,30 @@ function createWebServer(options) {
         }
     });
 
+    app.post('/api/notifications/ntfy/topic/regenerate', (request, response) => {
+        try {
+            const topic = saveEnvValue(NTFY_TOPIC_KEY, generateNtfyTopic(), envPath);
+            const raw = loadRawConfig(configPath);
+            raw.notifications ||= {};
+            raw.notifications.ntfy ||= {};
+            raw.notifications.ntfy.topic = '${WA_NTFY_TOPIC}';
+            const normalized = normalizeConfig(raw, process.env);
+            saveRawConfig(raw, configPath);
+            applyConfig(normalized);
+            activity?.sent('notification.ntfy_topic.regenerated', {
+                message: 'ntfy topic regenerated'
+            });
+            response.json({
+                ok: true,
+                topicConfigured: true,
+                maskedTopic: maskSecret(topic),
+                message: 'ntfy topic regenerated'
+            });
+        } catch (error) {
+            sendJsonError(response, error, activity);
+        }
+    });
+
     app.post('/api/notifications/ntfy/topic/send', async (request, response) => {
         try {
             if (status.whatsapp !== 'ready') {
@@ -352,7 +385,7 @@ function createWebServer(options) {
             const raw = loadRawConfig(configPath);
             const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
             if (!topic) {
-                throw new Error('Enter an ntfy topic first');
+                throw new Error('Enable ntfy to generate a topic first');
             }
 
             const server = raw.notifications?.ntfy?.server || 'https://ntfy.sh';
@@ -596,6 +629,8 @@ function createWebServer(options) {
 
 module.exports = {
     createWebServer,
+    ensureNtfyTopic,
+    generateNtfyTopic,
     recipientKey,
     notificationsFromBody,
     sanitizeUploadFilename,

@@ -114,6 +114,8 @@ textarea { resize: vertical; }
 }
 
 .notification-hint { margin-top: -0.2rem; font-size: 0.82rem; line-height: 1.35; }
+.ntfy-topic-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.ntfy-topic-row .notification-hint { margin-top: 3px; }
 
 .notification-save-status { font-size: 12px; color: #8e98a8; }
 .notification-save-status.saving { color: #f2ca65; }

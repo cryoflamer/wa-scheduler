@@ -133,7 +133,13 @@ function renderNotifications() {
                 <label class="switch-field"><span>Enabled</span><input id="notify-ntfy-enabled" type="checkbox" ${config.ntfy.enabled ? 'checked' : ''}></label>
             </div>
             <label>Server<input id="notify-ntfy-server" value="${escapeHtml(config.ntfy.server)}"></label>
-            <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
+            <div class="ntfy-topic-row">
+                <div>
+                    <strong>Topic</strong>
+                    <div id="notify-ntfy-topic-status" class="muted notification-hint">${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Generated automatically when ntfy is enabled.'}</div>
+                </div>
+                <button type="button" class="secondary" data-regenerate-ntfy-topic ${config.ntfy.topicConfigured ? '' : 'disabled'}>Regenerate topic</button>
+            </div>
             <div class="muted notification-hint">Install the ntfy app on the phone and subscribe to this exact topic. A successful test confirms publication to ntfy, not phone delivery.</div>
             <label>Send topic to WhatsApp<select id="notify-ntfy-topic-recipient" data-notification-local>${topicRecipients}</select></label>
             <button type="button" data-send-ntfy-topic>Send topic to WhatsApp</button>
@@ -165,6 +171,17 @@ function notificationFormReady() {
     return Boolean($('#notify-whatsapp-enabled') && $('#notify-ntfy-enabled'));
 }
 
+function updateNtfyTopicUi(config) {
+    const status = $('#notify-ntfy-topic-status');
+    const regenerate = $('[data-regenerate-ntfy-topic]');
+    if (status) {
+        status.textContent = config?.topicConfigured
+            ? `Configured · ${config.maskedTopic}`
+            : 'Generated automatically when ntfy is enabled.';
+    }
+    if (regenerate) regenerate.disabled = !config?.topicConfigured;
+}
+
 function notificationBody() {
     return {
         whatsapp: {
@@ -176,7 +193,6 @@ function notificationBody() {
         ntfy: {
             enabled: $('#notify-ntfy-enabled').checked,
             server: $('#notify-ntfy-server').value,
-            topic: $('#notify-ntfy-topic').value,
             includeMessage: $('#notify-ntfy-include-message').checked,
             events: selectedNotificationEvents('ntfy')
         }
@@ -224,6 +240,7 @@ async function saveNotifications({ allowRetry = true } = {}) {
 
     try {
         state.notifications = await request;
+        updateNtfyTopicUi(state.notifications.ntfy);
         notificationSave.retryRevision = null;
         if (notificationSave.revision === revision && !notificationSave.dirty) {
             setNotificationSaveStatus('saved');
@@ -441,6 +458,24 @@ document.addEventListener('click', async (event) => {
         state.editingFiles.splice(Number(event.target.dataset.removeFile), 1);
         renderFiles();
     }
+    if (event.target.dataset.regenerateNtfyTopic !== undefined) {
+        const confirmed = window.confirm('This will replace the current ntfy topic. The phone must subscribe to the new topic.');
+        if (!confirmed) return;
+        event.target.disabled = true;
+        try {
+            await flushNotificationSave();
+            const result = await api('/api/notifications/ntfy/topic/regenerate', { method: 'POST' });
+            state.notifications = await api('/api/notifications');
+            updateNtfyTopicUi(state.notifications.ntfy);
+            setNotificationSaveStatus('saved');
+            toast(result.message || 'ntfy topic regenerated');
+        } catch (error) {
+            $('#notification-error').textContent = error.message;
+        } finally {
+            event.target.disabled = false;
+        }
+        return;
+    }
     if (event.target.dataset.sendNtfyTopic !== undefined) {
         event.target.disabled = true;
         try {
@@ -504,7 +539,7 @@ notificationsEl.addEventListener('change', (event) => {
 });
 
 notificationsEl.addEventListener('input', (event) => {
-    if (!event.target.matches('#notify-ntfy-server, #notify-ntfy-topic')) return;
+    if (!event.target.matches('#notify-ntfy-server')) return;
     queueNotificationSave(600);
 });
 
