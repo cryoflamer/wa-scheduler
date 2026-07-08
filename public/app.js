@@ -66,6 +66,7 @@ const notificationEventLabels = {
     'job.completed': 'Job completed',
     'job.failed': 'Job failed',
     'job.partial': 'Job partially sent',
+    'job.catchup.started': 'Missed run started late',
     'job.retry.scheduled': 'Retry scheduled',
     'job.recovered': 'Job recovered',
     'job.retry.exhausted': 'Retries exhausted',
@@ -120,7 +121,7 @@ function renderNotifications() {
             <div class="notification-events">
                 ${notificationEventChecks('whatsapp', config.whatsapp.events, [
                     'job.completed', 'job.failed', 'job.partial',
-                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                    'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                 ])}
             </div>
@@ -143,7 +144,7 @@ function renderNotifications() {
             <div class="notification-events">
                 ${notificationEventChecks('ntfy', config.ntfy.events, [
                     'job.completed', 'job.failed', 'job.partial',
-                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                    'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                     'whatsapp.disconnected'
                 ])}

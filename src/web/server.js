@@ -28,6 +28,7 @@ const NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.catchup.started',
     'job.retry.scheduled',
     'job.recovered',
     'job.retry.exhausted',
@@ -169,14 +170,14 @@ function serializeNotifications(raw, envPath = '.env') {
     const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
 
     return {
-        version: 3,
+        version: 4,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             recipientKey: recipientKey(whatsapp.recipient),
             includeMessage: whatsapp.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(whatsapp.events || [
                 'job.completed', 'job.failed', 'job.partial',
-                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
             ]), raw.notifications?.version)
         },
@@ -189,7 +190,7 @@ function serializeNotifications(raw, envPath = '.env') {
             includeMessage: ntfy.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(ntfy.events || [
                 'job.completed', 'job.failed', 'job.partial',
-                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                 'whatsapp.disconnected'
             ]), raw.notifications?.version)
@@ -213,14 +214,14 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
     if (topic) saveEnvValue(NTFY_TOPIC_KEY, topic, envPath);
 
     return {
-        version: 3,
+        version: 4,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             includeMessage: whatsapp.includeMessage === true,
             recipient: recipient ? `\${${recipient}}` : currentRaw.notifications?.whatsapp?.recipient || '',
             events: normalizeUiEvents(whatsapp.events, [
                 'job.completed', 'job.failed', 'job.partial',
-                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
             ])
         },
@@ -559,7 +560,11 @@ function createWebServer(options) {
             if (raw.jobs.some((job) => job.recipient === reference)) {
                 throw new Error('Recipient is used by a job');
             }
+            if (raw.notifications?.whatsapp?.recipient === reference) {
+                throw new Error('Recipient is used by WhatsApp notifications');
+            }
             deleteRecipient(request.params.key, envPath);
+            applyConfig(loadConfig(configPath, process.env));
             response.json({ ok: true });
         } catch (error) {
             sendJsonError(response, error, activity);

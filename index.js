@@ -46,7 +46,7 @@ async function main() {
     client.once('ready', () => {
         status.whatsapp = 'ready';
         activity.info('whatsapp.ready', { message: 'WhatsApp ready' });
-        schedulerManager.apply(config);
+        schedulerManager.apply(config, { catchUpMissed: true });
         notificationManager.start();
     });
 

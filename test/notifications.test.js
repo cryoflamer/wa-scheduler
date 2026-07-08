@@ -378,3 +378,20 @@ test('outbox retries only providers that are still pending', async () => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('missed-run notifications explain that a delayed occurrence is starting', () => {
+    const notification = buildNotification('job.catchup.started', {
+        job: { id: 'report', recipient: '380661234567', message: 'Report', files: [] },
+        scheduledAt: '2026-07-13T05:00:00.000Z',
+        startedAt: '2026-07-13T06:00:00.000Z',
+        scheduledAtLabel: '13 Jul 2026, 08:00',
+        startedAtLabel: '13 Jul 2026, 09:00'
+    }, {
+        environment: { WA_RECIPIENT_LYOSHA: '380661234567' }
+    });
+
+    assert.match(notification.message, /report was missed/);
+    assert.match(notification.message, /To: LYOSHA/);
+    assert.match(notification.message, /Scheduled: 13 Jul 2026, 08:00/);
+    assert.match(notification.message, /Sending the delayed run now/);
+});

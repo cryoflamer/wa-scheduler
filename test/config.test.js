@@ -40,7 +40,7 @@ test('schedule configuration normalizes message and files', () => {
                     recipient: '',
                     events: [
                         'job.completed', 'job.failed', 'job.partial',
-                        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                        'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                         'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                     ],
                     includeMessage: false
@@ -51,7 +51,7 @@ test('schedule configuration normalizes message and files', () => {
                     topic: '',
                     events: [
                         'job.completed', 'job.failed', 'job.partial',
-                        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                        'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                         'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                         'whatsapp.disconnected'
                     ],
@@ -236,6 +236,16 @@ test('local schedule is created from the example when missing', () => {
     }
 });
 
+test('tracked schedule example boots without recipient or ntfy environment variables', () => {
+    const examplePath = path.resolve(__dirname, '..', 'schedule.example.json');
+    const config = loadConfig(examplePath, {});
+
+    assert.equal(config.timezone, 'Europe/Kyiv');
+    assert.deepEqual(config.jobs, []);
+    assert.equal(config.notifications.whatsapp.enabled, false);
+    assert.equal(config.notifications.ntfy.enabled, false);
+});
+
 test('empty jobs array is a valid local schedule', () => {
     withConfig({ timezone: 'Europe/Kyiv', jobs: [] }, (configPath) => {
         assert.deepEqual(loadConfig(configPath, {}), {
@@ -243,12 +253,12 @@ test('empty jobs array is a valid local schedule', () => {
             notifications: {
                 whatsapp: { enabled: false, recipient: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
-                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                    'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                 ], includeMessage: false },
                 ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
-                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
+                    'job.catchup.started', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                     'whatsapp.disconnected'
                 ], includeMessage: false }
@@ -284,14 +294,14 @@ test('notification providers are normalized with environment-backed secrets', ()
         assert.deepEqual(notifications.whatsapp, {
             enabled: true,
             recipient: '380660000000',
-            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted'],
+            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted', 'job.catchup.started'],
             includeMessage: false
         });
         assert.deepEqual(notifications.ntfy, {
             enabled: true,
             server: 'https://ntfy.sh',
             topic: 'private-topic',
-            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed', 'job.retry.scheduled', 'job.retry.exhausted'],
+            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed', 'job.retry.scheduled', 'job.retry.exhausted', 'job.catchup.started'],
             includeMessage: false
         });
     });
@@ -342,11 +352,11 @@ test('legacy notification settings inherit manual send events', () => {
 
     assert.deepEqual(normalized.whatsapp.events, [
         'job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed',
-        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted'
+        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted', 'job.catchup.started'
     ]);
     assert.deepEqual(normalized.ntfy.events, [
         'job.partial', 'whatsapp.disconnected', 'job.manual.partial',
-        'job.retry.scheduled', 'job.retry.exhausted'
+        'job.retry.scheduled', 'job.retry.exhausted', 'job.catchup.started'
     ]);
 });
 
@@ -359,10 +369,10 @@ test('notification settings version 2 can disable manual send events explicitly'
     }, {});
 
     assert.deepEqual(normalized.whatsapp.events, [
-        'job.completed', 'job.recovered'
+        'job.completed', 'job.recovered', 'job.catchup.started'
     ]);
     assert.deepEqual(normalized.ntfy.events, [
-        'job.failed', 'job.retry.scheduled', 'job.retry.exhausted'
+        'job.failed', 'job.retry.scheduled', 'job.retry.exhausted', 'job.catchup.started'
     ]);
 });
 

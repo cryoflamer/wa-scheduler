@@ -1,7 +1,7 @@
 {
   "timezone": "Europe/Kyiv",
   "notifications": {
-    "version": 3,
+    "version": 4,
     "whatsapp": {
       "enabled": false,
       "recipient": "${WA_RECIPIENT_SELF}",
@@ -9,6 +9,7 @@
         "job.completed",
         "job.failed",
         "job.partial",
+        "job.catchup.started",
         "job.retry.scheduled",
         "job.recovered",
         "job.retry.exhausted",
@@ -25,6 +26,7 @@
         "job.completed",
         "job.failed",
         "job.partial",
+        "job.catchup.started",
         "job.retry.scheduled",
         "job.recovered",
         "job.retry.exhausted",
@@ -35,22 +37,5 @@
       ]
     }
   },
-  "jobs": [
-    {
-      "id": "monday-report",
-      "schedule": "0 8 * * 1",
-      "recipient": "${WA_RECIPIENT_SELF}",
-      "message": "Доброго ранку. Надсилаю документи за понеділок.",
-      "files": [
-        {
-          "path": "documents/test-document.txt",
-          "caption": "тест"
-        }
-      ],
-      "retry": {
-        "attempts": 5,
-        "delayMinutes": 10
-      }
-    }
-  ]
+  "jobs": []
 }

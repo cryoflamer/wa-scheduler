@@ -23,7 +23,7 @@ Place documents under `documents/`. Document contents, scheduler state, WhatsApp
 
 ## Schedule configuration
 
-The repository tracks `schedule.example.json`. On the first start, wa-scheduler copies it to the ignored local `schedule.json`, and the UI edits only that local schedule:
+The repository tracks `schedule.example.json`. It intentionally starts with `jobs: []`, so a fresh clone does not require any recipient environment variables before the dashboard can open. On the first start, wa-scheduler copies the example to the ignored local `schedule.json`, and the UI edits only that local schedule. A configured job still has the following shape:
 
 ```json
 {
@@ -82,7 +82,7 @@ The original single-document form remains supported:
 npm start
 ```
 
-On first start, scan the QR code from WhatsApp under **Linked devices**. The client registers configured jobs after WhatsApp becomes ready.
+On first start, scan the QR code from WhatsApp under **Linked devices**. The client registers configured jobs after WhatsApp becomes ready. A fresh example schedule contains no jobs, so recipients and the first job can be created entirely from the dashboard before any scheduled delivery exists.
 
 Scheduler progress is recorded in `data/state.json` under a key composed from the job id and the exact scheduled occurrence in the configured timezone, for example `monday-report:2026-07-13T08:00`. Two cron occurrences on the same calendar day therefore have independent state and can both run. Message and file sends are persisted separately. If a multi-item job fails partway through, a later retry skips already recorded items and resumes with the first unsent item. The job is marked complete only after every configured item has been sent.
 
@@ -91,6 +91,18 @@ The first scheduled attempt also stores an immutable snapshot and SHA-256 finger
 State written by the earlier daily-key scheduler remains compatible: the legacy `job-id:YYYY-MM-DD` record is migrated to the first exact occurrence encountered for that date. A record already marked with `status: "sent"` remains completed and is not resent during that migration.
 
 Alternative paths can be selected with `WA_SCHEDULE_CONFIG`, `WA_STATE_FILE`, and `WA_ACTIVITY_FILE`.
+
+### Missed-run catch-up
+
+When WhatsApp becomes ready after process or service startup, wa-scheduler checks the latest scheduled occurrence of each enabled job within the previous 24 hours. If that occurrence has no state record, it is treated as missed and is sent immediately using its exact occurrence key. Only the latest missed occurrence is caught up, and an occurrence already completed, failed, retrying, or otherwise present in state is not duplicated. An unfinished earlier run blocks catch-up for the same job.
+
+The catch-up event is written to Activity and can notify the operator through WhatsApp or ntfy as **Missed run started late** before the delayed send begins. Normal completion, retry, and failure handling then applies to that same occurrence. Override the startup look-back window with:
+
+```dotenv
+WA_MISSED_RUN_CATCHUP_HOURS=24
+```
+
+Use `0` to disable catch-up. The value must be an integer from 0 to 720 hours. Catch-up is evaluated only during runtime startup after WhatsApp becomes ready; editing settings or jobs in the dashboard does not retroactively trigger missed jobs.
 
 ## Test
 
@@ -108,7 +120,7 @@ http://127.0.0.1:3000
 
 The UI shows WhatsApp connection status and scheduled jobs. Jobs can be created, edited, deleted, or sent immediately. The schedule editor provides daily, weekly, and monthly forms with an advanced cron fallback.
 
-Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the local schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked.
+Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the local schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked. A recipient cannot be deleted while any job or the WhatsApp notification configuration still references that alias, preventing a configuration that works until the next restart and then fails on a missing environment variable.
 
 Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
 
@@ -143,13 +155,13 @@ To stop and remove the generated user service:
 npm run service:remove
 ```
 
-The service starts wa-scheduler when the systemd user manager starts. On WSL, this does not itself launch the WSL distribution from a fully stopped Windows session; WSL/systemd must be running for the Linux user service to run.
+The service starts wa-scheduler when the systemd user manager starts. On a normal Ubuntu system, this is the intended unattended runtime mode.
 
 ## Notifications
 
 The dashboard can notify the operator independently from the job recipient. Notification settings are local runtime configuration stored in the ignored `schedule.json` and `.env`.
 
-WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, and partial-send events can be enabled separately for scheduled and manual **Send now** runs. Manual completion notifications explicitly say that the job was sent manually. Operator notifications identify the job recipient by alias when possible, list sent and pending items by filename, and include failure details. Each provider has an **Include message body** checkbox; it is off by default so the original job text is not copied into operator notifications unless explicitly enabled. Notification delivery uses a persistent per-run provider outbox. A successful provider is never repeated, while a failed provider remains pending in `data/state.json` and is retried in the background with bounded backoff after WhatsApp is ready, including after a process or service restart.
+WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, partial-send, missed-run catch-up, retry, and recovery events can be enabled separately for scheduled and manual **Send now** runs. Manual completion notifications explicitly say that the job was sent manually. Operator notifications identify the job recipient by alias when possible, list sent and pending items by filename, and include failure details. Each provider has an **Include message body** checkbox; it is off by default so the original job text is not copied into operator notifications unless explicitly enabled. Notification delivery uses a persistent per-run provider outbox. A successful provider is never repeated, while a failed provider remains pending in `data/state.json` and is retried in the background with bounded backoff after WhatsApp is ready, including after a process or service restart.
 
 Notification settings are saved automatically. Checkbox and recipient changes are persisted immediately; ntfy server and topic fields are saved after a short typing pause. The dashboard shows `Saving…`, `Saved ✓`, or `Save failed`, retries one failed autosave, and warns before closing the page while unsaved notification changes remain. There is no separate notification save button.
 

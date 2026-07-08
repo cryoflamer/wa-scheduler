@@ -3,7 +3,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { dateKey, occurrenceKey, registerJobs, runJob, SchedulerManager } = require('../src/scheduler');
+const {
+    dateKey, latestCronOccurrence, occurrenceKey, parseMissedRunCatchUpHours,
+    registerJobs, runJob, SchedulerManager
+} = require('../src/scheduler');
 const { StateStore } = require('../src/state');
 
 function withState(callback) {
@@ -438,6 +441,79 @@ test('job-level locking prevents a scheduled run from overlapping a manual run',
         assert.equal(result.status, 'overlap');
         manager.endManualRun('report');
         assert.equal(manager.isJobActive('report'), false);
+        manager.stop();
+    });
+});
+
+
+test('latest cron occurrence is resolved in the configured timezone', () => {
+    const occurrence = latestCronOccurrence(
+        '0 8 * * 1',
+        'Europe/Kyiv',
+        new Date('2026-07-13T06:00:00.000Z'),
+        24
+    );
+
+    assert.equal(occurrence.toISOString(), '2026-07-13T05:00:00.000Z');
+    assert.equal(latestCronOccurrence(
+        '0 8 * * 1',
+        'Europe/Kyiv',
+        new Date('2026-07-14T06:00:00.000Z'),
+        12
+    ), null);
+});
+
+test('missed run catch-up window is validated and can be disabled', () => {
+    assert.equal(parseMissedRunCatchUpHours(undefined), 24);
+    assert.equal(parseMissedRunCatchUpHours('0'), 0);
+    assert.equal(parseMissedRunCatchUpHours('48'), 48);
+    assert.throws(() => parseMissedRunCatchUpHours('-1'), /between 0 and 720/);
+    assert.throws(() => parseMissedRunCatchUpHours('721'), /between 0 and 720/);
+});
+
+test('startup catch-up sends the latest missed occurrence only once', async () => {
+    await withState(async (stateStore) => {
+        const sent = [];
+        const notificationEvents = [];
+        const activityEvents = [];
+        const client = {
+            async sendMessage(chatId, message) {
+                sent.push([chatId, message]);
+                return {};
+            }
+        };
+        const manager = new SchedulerManager(client, stateStore, {
+            info(type, fields) { activityEvents.push([type, fields.jobId]); },
+            sent() {}, error() {}, skipped() {}
+        }, {
+            apply() {},
+            async notify(type, context) { notificationEvents.push([type, context.idempotencyKey]); }
+        }, {
+            now: () => new Date('2026-07-13T06:00:00.000Z'),
+            catchUpHours: 24
+        });
+        const config = {
+            timezone: 'Europe/Kyiv', notifications: {}, jobs: [{
+                id: 'report', enabled: true, schedule: '0 8 * * 1', recipient: '380660000000',
+                retry: { attempts: 0, delayMinutes: 10 }, message: 'Report', files: []
+            }]
+        };
+
+        manager.apply(config);
+        const first = await manager.resumeMissedRuns();
+        const second = await manager.resumeMissedRuns();
+
+        assert.equal(first.length, 1);
+        assert.equal(first[0].key, 'report:2026-07-13T08:00');
+        assert.deepEqual(second, []);
+        assert.deepEqual(sent, [['380660000000@c.us', 'Report']]);
+        assert.deepEqual(activityEvents.filter(([type]) => type === 'job.catchup.started'), [
+            ['job.catchup.started', 'report']
+        ]);
+        assert.deepEqual(notificationEvents, [
+            ['job.catchup.started', 'report:2026-07-13T08:00'],
+            ['job.completed', 'report:2026-07-13T08:00']
+        ]);
         manager.stop();
     });
 });

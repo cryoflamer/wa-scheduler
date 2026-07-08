@@ -90,6 +90,21 @@ function buildNotification(type, context = {}, options = {}) {
             message: `❌ ${job.id} failed\n\n${details}\n\nError:\n${safeErrorMessage(context.error)}`
         };
     }
+    if (type === 'job.catchup.started') {
+        return {
+            title: 'wa-scheduler delayed run',
+            priority: 'high',
+            tags: ['warning'],
+            message: `⚠️ ${job.id} was missed
+
+${details}
+
+Scheduled: ${context.scheduledAtLabel || context.scheduledAt}
+Started late: ${context.startedAtLabel || context.startedAt}
+
+Sending the delayed run now.`
+        };
+    }
     if (type === 'job.retry.scheduled') {
         return {
             title: 'wa-scheduler retry scheduled',

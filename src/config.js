@@ -7,6 +7,7 @@ const DEFAULT_WHATSAPP_NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.catchup.started',
     'job.retry.scheduled',
     'job.recovered',
     'job.retry.exhausted',
@@ -18,6 +19,7 @@ const DEFAULT_NTFY_NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.catchup.started',
     'job.retry.scheduled',
     'job.recovered',
     'job.retry.exhausted',
@@ -30,6 +32,7 @@ const ALLOWED_NOTIFICATION_EVENTS = new Set([
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.catchup.started',
     'job.retry.scheduled',
     'job.recovered',
     'job.retry.exhausted',
@@ -66,6 +69,10 @@ function upgradeLegacyNotificationEvents(events, version) {
         if ((events.includes('job.failed') || events.includes('job.partial')) && !upgraded.includes('job.retry.exhausted')) {
             upgraded.push('job.retry.exhausted');
         }
+    }
+
+    if (configVersion < 4 && !upgraded.includes('job.catchup.started')) {
+        upgraded.push('job.catchup.started');
     }
 
     return upgraded;

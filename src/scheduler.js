@@ -3,6 +3,50 @@ const cron = require('node-cron');
 const { sendDocument, sendTextMessage } = require('./whatsapp');
 const { dateKey, occurrenceKey } = require('./run_identity');
 
+const DEFAULT_MISSED_RUN_CATCHUP_HOURS = 24;
+const MAX_MISSED_RUN_CATCHUP_HOURS = 24 * 30;
+
+function parseMissedRunCatchUpHours(value) {
+    if (value === undefined || value === null || value === '') return DEFAULT_MISSED_RUN_CATCHUP_HOURS;
+    const hours = Number(value);
+    if (!Number.isInteger(hours) || hours < 0 || hours > MAX_MISSED_RUN_CATCHUP_HOURS) {
+        throw new Error(`WA_MISSED_RUN_CATCHUP_HOURS must be an integer between 0 and ${MAX_MISSED_RUN_CATCHUP_HOURS}`);
+    }
+    return hours;
+}
+
+function formatLocalDateTime(date, timezone) {
+    return new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(date);
+}
+
+function latestCronOccurrence(schedule, timezone, now, lookbackHours) {
+    if (lookbackHours <= 0) return null;
+    const fieldCount = String(schedule).trim().split(/\s+/).length;
+    const stepMs = fieldCount === 6 ? 1000 : 60_000;
+    const task = cron.createTask(schedule, () => {}, { timezone });
+    const end = now.getTime();
+    const cutoff = end - lookbackHours * 60 * 60 * 1000;
+    let candidateMs = Math.floor(end / stepMs) * stepMs;
+
+    try {
+        for (; candidateMs >= cutoff; candidateMs -= stepMs) {
+            const candidate = new Date(candidateMs);
+            if (task.match(candidate)) return candidate;
+        }
+        return null;
+    } finally {
+        task.destroy();
+    }
+}
+
 function report(activity, method, type, fields, fallback) {
     if (activity) {
         activity[method](type, fields);
@@ -191,9 +235,12 @@ class SchedulerManager {
         this.setTimeout = options.setTimeout || setTimeout;
         this.clearTimeout = options.clearTimeout || clearTimeout;
         this.now = options.now || (() => new Date());
+        this.catchUpHours = parseMissedRunCatchUpHours(
+            options.catchUpHours ?? process.env.WA_MISSED_RUN_CATCHUP_HOURS
+        );
     }
 
-    apply(config) {
+    apply(config, options = {}) {
         this.notifications?.apply(config.notifications);
         this.stop();
         this.config = config;
@@ -206,6 +253,55 @@ class SchedulerManager {
             (job, key) => this.executeScheduled(job, key, 0)
         );
         this.resumePendingRetries();
+        if (options.catchUpMissed === true) void this.resumeMissedRuns();
+    }
+
+    async resumeMissedRuns() {
+        if (!this.config || this.catchUpHours <= 0) return [];
+        const results = [];
+        const now = this.now();
+
+        for (const job of this.config.jobs) {
+            if (!job.enabled) continue;
+            const scheduledAt = latestCronOccurrence(job.schedule, this.config.timezone, now, this.catchUpHours);
+            if (!scheduledAt) continue;
+
+            const key = occurrenceKey(job.id, scheduledAt, this.config.timezone);
+            this.stateStore.migrateLegacyScheduledRun?.(key, job.id);
+            if (this.stateStore.has(key)) continue;
+
+            const unresolved = this.stateStore.findUnresolvedScheduledRun?.(job.id, key);
+            if (unresolved) {
+                report(this.activity, 'skipped', 'job.catchup.blocked', {
+                    jobId: job.id,
+                    message: 'Missed run catch-up is blocked by an unfinished previous run',
+                    details: { previousRunKey: unresolved.key, previousStatus: unresolved.status }
+                }, `Job ${job.id} catch-up blocked by an unfinished previous run`);
+                results.push({ key, result: { status: 'blocked', previousRunKey: unresolved.key } });
+                continue;
+            }
+
+            report(this.activity, 'info', 'job.catchup.started', {
+                jobId: job.id,
+                message: 'Missed scheduled run is being sent now',
+                details: { scheduledAt: scheduledAt.toISOString(), startedAt: now.toISOString() }
+            }, `Job ${job.id} missed its scheduled time; sending delayed run now`);
+
+            if (this.notifications) {
+                await this.notifications.notify('job.catchup.started', {
+                    job,
+                    idempotencyKey: key,
+                    scheduledAt: scheduledAt.toISOString(),
+                    startedAt: now.toISOString(),
+                    scheduledAtLabel: formatLocalDateTime(scheduledAt, this.config.timezone),
+                    startedAtLabel: formatLocalDateTime(now, this.config.timezone)
+                });
+            }
+
+            results.push({ key, result: await this.executeScheduled(job, key, 0) });
+        }
+
+        return results;
     }
 
     async executeScheduled(job, key, retryAttempt = 0) {
@@ -378,7 +474,10 @@ class SchedulerManager {
 }
 
 module.exports = {
+    DEFAULT_MISSED_RUN_CATCHUP_HOURS,
     dateKey,
+    latestCronOccurrence,
+    parseMissedRunCatchUpHours,
     occurrenceKey,
     registerJobs,
     runJob,

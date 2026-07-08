@@ -437,3 +437,53 @@ test('manual send is rejected while the same job is already active', async (t) =
     assert.match(body.error, /currently running/);
     assert.equal(sendCalls, 0);
 });
+
+test('recipient deletion is blocked while WhatsApp notifications reference it', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-delete-notification-recipient-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const envPath = path.join(directory, '.env');
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            version: 4,
+            whatsapp: { enabled: false, recipient: '${WA_RECIPIENT_SELF}', events: [] },
+            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: [] }
+        },
+        jobs: []
+    }));
+    fs.writeFileSync(envPath, 'WA_RECIPIENT_SELF=380661234567\nWA_RECIPIENT_OTHER=380669999999\n');
+    process.env.WA_RECIPIENT_SELF = '380661234567';
+    process.env.WA_RECIPIENT_OTHER = '380669999999';
+
+    let applyCalls = 0;
+    const schedulerManager = {
+        config: loadConfig(configPath),
+        tasks: [],
+        apply(config) { applyCalls += 1; this.config = config; }
+    };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager, configPath, envPath,
+        status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_RECIPIENT_SELF;
+        delete process.env.WA_RECIPIENT_OTHER;
+    });
+    const { port } = server.address();
+
+    const blocked = await fetch(`http://127.0.0.1:${port}/api/recipients/WA_RECIPIENT_SELF`, { method: 'DELETE' });
+    const blockedBody = await blocked.json();
+    assert.equal(blocked.status, 400);
+    assert.match(blockedBody.error, /used by WhatsApp notifications/);
+    assert.match(fs.readFileSync(envPath, 'utf8'), /WA_RECIPIENT_SELF=/);
+    assert.equal(applyCalls, 0);
+
+    const deleted = await fetch(`http://127.0.0.1:${port}/api/recipients/WA_RECIPIENT_OTHER`, { method: 'DELETE' });
+    assert.equal(deleted.status, 200);
+    assert.doesNotMatch(fs.readFileSync(envPath, 'utf8'), /WA_RECIPIENT_OTHER=/);
+    assert.equal(applyCalls, 1);
+});
