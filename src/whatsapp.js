@@ -56,10 +56,20 @@ async function sendDocument(client, recipientOrJob, file) {
     media.filename = path.basename(filePath);
     media.filesize = fs.statSync(filePath).size;
 
-    await client.sendMessage(chatIdFor(recipient), media, {
+    const sentMessage = await client.sendMessage(chatIdFor(recipient), media, {
         sendMediaAsDocument: true,
-        caption: document.caption
+        caption: document.caption,
+        extra: {
+            filename: media.filename
+        }
     });
+
+    const sentFilename = sentMessage?._data?.filename;
+    if (sentFilename !== media.filename) {
+        console.warn(
+            `WhatsApp document filename mismatch: requested=${media.filename}; returned=${sentFilename || '<missing>'}`
+        );
+    }
 
     return filePath;
 }
