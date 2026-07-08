@@ -18,8 +18,11 @@ const {
 } = require('../recipients');
 const { runJob } = require('../scheduler');
 const { safeErrorMessage } = require('../activity');
+const { loadEnvValue, maskSecret, saveEnvValue } = require('../env');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
+const NTFY_TOPIC_KEY = 'WA_NTFY_TOPIC';
+const NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'];
 
 function decodeMultipartFilename(filename) {
     const value = String(filename || '');
@@ -136,6 +139,63 @@ function jobFromBody(body) {
     };
 }
 
+
+function normalizeUiEvents(value, allowed = NOTIFICATION_EVENTS) {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.map(String).filter((event) => allowed.includes(event)))];
+}
+
+function serializeNotifications(raw, envPath = '.env') {
+    const whatsapp = raw.notifications?.whatsapp || {};
+    const ntfy = raw.notifications?.ntfy || {};
+    const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
+
+    return {
+        whatsapp: {
+            enabled: whatsapp.enabled === true,
+            recipientKey: recipientKey(whatsapp.recipient),
+            events: normalizeUiEvents(whatsapp.events || ['job.completed', 'job.failed', 'job.partial'])
+        },
+        ntfy: {
+            enabled: ntfy.enabled === true,
+            server: ntfy.server || 'https://ntfy.sh',
+            topicConfigured: Boolean(topic),
+            maskedTopic: maskSecret(topic),
+            events: normalizeUiEvents(ntfy.events || ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'])
+        }
+    };
+}
+
+function notificationsFromBody(body, currentRaw, envPath = '.env') {
+    const whatsapp = body.whatsapp || {};
+    const ntfy = body.ntfy || {};
+    const recipient = String(whatsapp.recipientKey || '').trim();
+    const topic = String(ntfy.topic || '').trim();
+    const currentTopic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
+
+    if (whatsapp.enabled && !recipient.startsWith('WA_RECIPIENT_')) {
+        throw new Error('Select a WhatsApp notification recipient');
+    }
+    if (ntfy.enabled && !topic && !currentTopic) {
+        throw new Error('Enter an ntfy topic');
+    }
+    if (topic) saveEnvValue(NTFY_TOPIC_KEY, topic, envPath);
+
+    return {
+        whatsapp: {
+            enabled: whatsapp.enabled === true,
+            recipient: recipient ? `\${${recipient}}` : currentRaw.notifications?.whatsapp?.recipient || '',
+            events: normalizeUiEvents(whatsapp.events, ['job.completed', 'job.failed', 'job.partial'])
+        },
+        ntfy: {
+            enabled: ntfy.enabled === true,
+            server: String(ntfy.server || 'https://ntfy.sh').trim(),
+            topic: '${WA_NTFY_TOPIC}',
+            events: normalizeUiEvents(ntfy.events)
+        }
+    };
+}
+
 function sendJsonError(response, error, activity = null) {
     if (activity) {
         activity.error('ui.request.failed', { error });
@@ -153,11 +213,17 @@ function createWebServer(options) {
         configPath = process.env.WA_SCHEDULE_CONFIG || 'schedule.json',
         envPath = '.env',
         status,
-        activity
+        activity,
+        notificationManager
     } = options;
     const app = express();
     const upload = createUpload();
     const streams = new Set();
+
+    function applyConfig(config) {
+        schedulerManager.apply(config);
+        notificationManager?.apply(config.notifications);
+    }
 
     app.closeStreams = () => {
         for (const response of streams) {
@@ -213,6 +279,37 @@ function createWebServer(options) {
         });
     });
 
+    app.get('/api/notifications', (_request, response) => {
+        const raw = loadRawConfig(configPath);
+        response.json(serializeNotifications(raw, envPath));
+    });
+
+    app.put('/api/notifications', (request, response) => {
+        try {
+            const raw = loadRawConfig(configPath);
+            raw.notifications = notificationsFromBody(request.body, raw, envPath);
+            const normalized = normalizeConfig(raw, process.env);
+            saveRawConfig(raw, configPath);
+            applyConfig(normalized);
+            response.json(serializeNotifications(raw, envPath));
+        } catch (error) {
+            sendJsonError(response, error, activity);
+        }
+    });
+
+    app.post('/api/notifications/test/:provider', async (request, response) => {
+        try {
+            if (!notificationManager) throw new Error('Notifications are not available');
+            if (request.params.provider === 'whatsapp' && status.whatsapp !== 'ready') {
+                throw new Error('WhatsApp is not ready');
+            }
+            await notificationManager.test(request.params.provider);
+            response.json({ ok: true });
+        } catch (error) {
+            sendJsonError(response, error, activity);
+        }
+    });
+
     app.get('/api/jobs', (_request, response) => {
         const raw = loadRawConfig(configPath);
         const normalized = loadConfig(configPath, process.env);
@@ -232,7 +329,7 @@ function createWebServer(options) {
             raw.jobs.push(jobFromBody(request.body));
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
-            schedulerManager.apply(normalized);
+            applyConfig(normalized);
             response.status(201).json({ ok: true });
         } catch (error) {
             sendJsonError(response, error, activity);
@@ -250,7 +347,7 @@ function createWebServer(options) {
             raw.jobs[index] = jobFromBody(request.body);
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
-            schedulerManager.apply(normalized);
+            applyConfig(normalized);
             return response.json({ ok: true });
         } catch (error) {
             return sendJsonError(response, error, activity);
@@ -266,7 +363,7 @@ function createWebServer(options) {
             job.enabled = job.enabled === false;
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
-            schedulerManager.apply(normalized);
+            applyConfig(normalized);
             return response.json({ ok: true, enabled: job.enabled });
         } catch (error) {
             return sendJsonError(response, error, activity);
@@ -279,7 +376,7 @@ function createWebServer(options) {
             raw.jobs = raw.jobs.filter((job) => job.id !== request.params.id);
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
-            schedulerManager.apply(normalized);
+            applyConfig(normalized);
             response.json({ ok: true });
         } catch (error) {
             sendJsonError(response, error, activity);
@@ -313,7 +410,7 @@ function createWebServer(options) {
     app.post('/api/recipients', (request, response) => {
         try {
             const recipient = saveRecipient(request.body.name, request.body.number, envPath);
-            schedulerManager.apply(loadConfig(configPath, process.env));
+            applyConfig(loadConfig(configPath, process.env));
             response.status(201).json({
                 key: recipient.key,
                 name: recipient.name,
@@ -355,7 +452,9 @@ function createWebServer(options) {
 module.exports = {
     createWebServer,
     recipientKey,
+    notificationsFromBody,
     sanitizeUploadFilename,
+    serializeNotifications,
     serializeJob,
     uniqueUploadFilename
 };

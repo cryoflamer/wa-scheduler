@@ -34,6 +34,19 @@ test('schedule configuration normalizes message and files', () => {
     }, (configPath) => {
         assert.deepEqual(loadConfig(configPath, {}), {
             timezone: 'Europe/Kyiv',
+            notifications: {
+                whatsapp: {
+                    enabled: false,
+                    recipient: '',
+                    events: ['job.completed', 'job.failed', 'job.partial']
+                },
+                ntfy: {
+                    enabled: false,
+                    server: 'https://ntfy.sh',
+                    topic: '',
+                    events: ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected']
+                }
+            },
             jobs: [{
                 id: 'report',
                 schedule: '0 8 * * 1',
@@ -213,7 +226,63 @@ test('empty jobs array is a valid local schedule', () => {
     withConfig({ timezone: 'Europe/Kyiv', jobs: [] }, (configPath) => {
         assert.deepEqual(loadConfig(configPath, {}), {
             timezone: 'Europe/Kyiv',
+            notifications: {
+                whatsapp: { enabled: false, recipient: '', events: ['job.completed', 'job.failed', 'job.partial'] },
+                ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'] }
+            },
             jobs: []
         });
+    });
+});
+
+test('notification providers are normalized with environment-backed secrets', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: {
+                enabled: true,
+                recipient: '${WA_RECIPIENT_SELF}',
+                events: ['job.completed', 'job.failed']
+            },
+            ntfy: {
+                enabled: true,
+                server: 'https://ntfy.sh',
+                topic: '${WA_NTFY_TOPIC}',
+                events: ['job.failed', 'whatsapp.disconnected']
+            }
+        },
+        jobs: []
+    }, (configPath) => {
+        const notifications = loadConfig(configPath, {
+            WA_RECIPIENT_SELF: '380660000000',
+            WA_NTFY_TOPIC: 'private-topic'
+        }).notifications;
+
+        assert.deepEqual(notifications.whatsapp, {
+            enabled: true,
+            recipient: '380660000000',
+            events: ['job.completed', 'job.failed']
+        });
+        assert.deepEqual(notifications.ntfy, {
+            enabled: true,
+            server: 'https://ntfy.sh',
+            topic: 'private-topic',
+            events: ['job.failed', 'whatsapp.disconnected']
+        });
+    });
+});
+
+test('disabled notification providers do not require secrets', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: { enabled: false, recipient: '${WA_RECIPIENT_SELF}' },
+            ntfy: { enabled: false, topic: '${WA_NTFY_TOPIC}' }
+        },
+        jobs: []
+    }, (configPath) => {
+        const notifications = loadConfig(configPath, {}).notifications;
+        assert.equal(notifications.whatsapp.enabled, false);
+        assert.equal(notifications.ntfy.enabled, false);
     });
 });

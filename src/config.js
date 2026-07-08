@@ -3,6 +3,67 @@ const path = require('path');
 
 const ENVIRONMENT_VARIABLE_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
+const DEFAULT_WHATSAPP_NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial'];
+const DEFAULT_NTFY_NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'];
+const ALLOWED_NOTIFICATION_EVENTS = new Set([
+    'job.completed',
+    'job.failed',
+    'job.partial',
+    'whatsapp.disconnected'
+]);
+
+function normalizeNotificationEvents(value, fieldName, defaults) {
+    if (value === undefined) return [...defaults];
+    if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array`);
+    const events = value.map((event, index) => requireNonEmptyString(event, `${fieldName}[${index}]`));
+    for (const event of events) {
+        if (!ALLOWED_NOTIFICATION_EVENTS.has(event)) {
+            throw new Error(`${fieldName} contains unsupported event: ${event}`);
+        }
+    }
+    return [...new Set(events)];
+}
+
+function normalizeNotifications(value, environment) {
+    const notifications = value === undefined ? {} : value;
+    if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
+        throw new Error('notifications must be an object');
+    }
+
+    const whatsappRaw = notifications.whatsapp || {};
+    const ntfyRaw = notifications.ntfy || {};
+    const whatsappEnabled = whatsappRaw.enabled === undefined ? false : requireBoolean(whatsappRaw.enabled, 'notifications.whatsapp.enabled');
+    const ntfyEnabled = ntfyRaw.enabled === undefined ? false : requireBoolean(ntfyRaw.enabled, 'notifications.ntfy.enabled');
+
+    const whatsapp = {
+        enabled: whatsappEnabled,
+        recipient: whatsappEnabled
+            ? requireExpandedString(whatsappRaw.recipient, 'notifications.whatsapp.recipient', environment)
+            : '',
+        events: normalizeNotificationEvents(
+            whatsappRaw.events,
+            'notifications.whatsapp.events',
+            DEFAULT_WHATSAPP_NOTIFICATION_EVENTS
+        )
+    };
+    const ntfy = {
+        enabled: ntfyEnabled,
+        server: ntfyEnabled
+            ? requireExpandedString(ntfyRaw.server, 'notifications.ntfy.server', environment)
+            : String(ntfyRaw.server || 'https://ntfy.sh'),
+        topic: ntfyEnabled
+            ? requireExpandedString(ntfyRaw.topic, 'notifications.ntfy.topic', environment)
+            : '',
+        events: normalizeNotificationEvents(
+            ntfyRaw.events,
+            'notifications.ntfy.events',
+            DEFAULT_NTFY_NOTIFICATION_EVENTS
+        )
+    };
+
+    return { whatsapp, ntfy };
+}
+
 function requireNonEmptyString(value, fieldName) {
     if (typeof value !== 'string' || value.trim() === '') {
         throw new Error(`${fieldName} must be a non-empty string`);
@@ -180,7 +241,9 @@ function normalizeConfig(parsed, environment = process.env) {
         ids.add(job.id);
     }
 
-    return { timezone, jobs };
+    const notifications = normalizeNotifications(parsed.notifications, environment);
+
+    return { timezone, notifications, jobs };
 }
 
 function loadConfig(configPath = 'schedule.json', environment = process.env) {
@@ -201,5 +264,6 @@ module.exports = {
     loadConfig,
     loadRawConfig,
     normalizeConfig,
+    normalizeNotifications,
     saveRawConfig
 };

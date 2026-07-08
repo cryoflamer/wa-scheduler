@@ -71,3 +71,22 @@ test('manual state is excluded from latest scheduled run', () => {
         assert.equal(store.getLatestScheduledRun(job), null);
     });
 });
+
+test('notification delivery state is persisted per event and provider', () => {
+    withStore((store) => {
+        const key = 'report:2026-07-13';
+        store.markNotificationSent(key, 'job.completed', 'whatsapp', '2026-07-13T05:00:03.000Z');
+        assert.equal(store.isNotificationSent(key, 'job.completed', 'whatsapp'), true);
+        assert.equal(store.isNotificationSent(key, 'job.completed', 'ntfy'), false);
+    });
+});
+
+test('run progress counts sent messages and files', () => {
+    withStore((store) => {
+        const key = 'report:2026-07-13';
+        const job = { message: 'Message', files: [{ path: 'one.pdf' }, { path: 'two.pdf' }] };
+        store.markMessageSent(key, '2026-07-13T05:00:01.000Z');
+        store.markFileSent(key, 'one.pdf', '2026-07-13T05:00:02.000Z');
+        assert.deepEqual(store.getRunProgress(key, job), { sentItems: 2, totalItems: 3 });
+    });
+});

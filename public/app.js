@@ -1,10 +1,11 @@
-const state = { jobs: [], recipients: [], timezone: '', editingFiles: [], activity: [], activityFilter: 'all' };
+const state = { jobs: [], recipients: [], notifications: null, timezone: '', editingFiles: [], activity: [], activityFilter: 'all' };
 const $ = (selector) => document.querySelector(selector);
 const jobsEl = $('#jobs');
 const recipientsEl = $('#recipients');
 const jobDialog = $('#job-dialog');
 const recipientDialog = $('#recipient-dialog');
 const activityEl = $('#activity');
+const notificationsEl = $('#notifications');
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function formatDateTime(value) {
@@ -54,6 +55,92 @@ function scheduleLabel(cron) {
     return `Cron ${cron}`;
 }
 
+
+
+const notificationEventLabels = {
+    'job.completed': 'Job completed',
+    'job.failed': 'Job failed',
+    'job.partial': 'Job partially sent',
+    'whatsapp.disconnected': 'WhatsApp disconnected'
+};
+
+function notificationEventChecks(provider, events, allowed) {
+    return allowed.map((event) => `
+        <label class="notification-event">
+            <input type="checkbox" data-notification-event="${provider}" value="${event}" ${events.includes(event) ? 'checked' : ''}>
+            <span>${escapeHtml(notificationEventLabels[event])}</span>
+        </label>
+    `).join('');
+}
+
+function renderNotifications() {
+    const config = state.notifications;
+    if (!config) {
+        notificationsEl.innerHTML = '<div class="empty">Loading notifications…</div>';
+        return;
+    }
+    const whatsappRecipients = '<option value="">Select recipient</option>' + state.recipients.map((recipient) => `
+        <option value="${escapeHtml(recipient.key)}" ${recipient.key === config.whatsapp.recipientKey ? 'selected' : ''}>
+            ${escapeHtml(recipient.name)} · ${escapeHtml(recipient.maskedNumber)}
+        </option>
+    `).join('');
+
+    notificationsEl.innerHTML = `
+        <article class="notification-card">
+            <div class="notification-head">
+                <div><strong>WhatsApp</strong><div class="muted">Confirmation in your own WhatsApp</div></div>
+                <label class="switch-field"><span>Enabled</span><input id="notify-whatsapp-enabled" type="checkbox" ${config.whatsapp.enabled ? 'checked' : ''}></label>
+            </div>
+            <label>Send to<select id="notify-whatsapp-recipient">${whatsappRecipients}</select></label>
+            <div class="notification-events">
+                ${notificationEventChecks('whatsapp', config.whatsapp.events, ['job.completed', 'job.failed', 'job.partial'])}
+            </div>
+            <button data-test-notification="whatsapp">Send test</button>
+        </article>
+        <article class="notification-card">
+            <div class="notification-head">
+                <div><strong>Push · ntfy</strong><div class="muted">Independent phone push channel</div></div>
+                <label class="switch-field"><span>Enabled</span><input id="notify-ntfy-enabled" type="checkbox" ${config.ntfy.enabled ? 'checked' : ''}></label>
+            </div>
+            <label>Server<input id="notify-ntfy-server" value="${escapeHtml(config.ntfy.server)}"></label>
+            <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
+            <div class="notification-events">
+                ${notificationEventChecks('ntfy', config.ntfy.events, ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'])}
+            </div>
+            <button data-test-notification="ntfy">Send test</button>
+        </article>
+        <div class="notification-actions">
+            <p id="notification-error" class="error"></p>
+            <button id="save-notifications" class="primary">Save notifications</button>
+        </div>
+    `;
+}
+
+function selectedNotificationEvents(provider) {
+    return [...document.querySelectorAll(`[data-notification-event="${provider}"]:checked`)].map((input) => input.value);
+}
+
+async function saveNotifications() {
+    const body = {
+        whatsapp: {
+            enabled: $('#notify-whatsapp-enabled').checked,
+            recipientKey: $('#notify-whatsapp-recipient').value,
+            events: selectedNotificationEvents('whatsapp')
+        },
+        ntfy: {
+            enabled: $('#notify-ntfy-enabled').checked,
+            server: $('#notify-ntfy-server').value,
+            topic: $('#notify-ntfy-topic').value,
+            events: selectedNotificationEvents('ntfy')
+        }
+    };
+    state.notifications = await api('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    renderNotifications();
+}
 
 function activityMatchesFilter(event) {
     if (state.activityFilter === 'all') return true;
@@ -124,18 +211,20 @@ function renderRecipients() {
 }
 
 async function refresh() {
-    const [jobs, recipients, status] = await Promise.all([
-        api('/api/jobs'), api('/api/recipients'), api('/api/status')
+    const [jobs, recipients, status, notifications] = await Promise.all([
+        api('/api/jobs'), api('/api/recipients'), api('/api/status'), api('/api/notifications')
     ]);
     state.jobs = jobs.jobs;
     state.timezone = jobs.timezone;
     state.recipients = recipients;
+    state.notifications = notifications;
     const since = status.startedAt ? ` · running since ${formatDateTime(status.startedAt)}` : '';
     $('#summary').textContent = `${status.activeJobs}/${jobs.jobs.length} active · ${jobs.timezone}${since}`;
     $('#wa-status').textContent = status.whatsapp;
     $('#wa-status').className = `status ${status.whatsapp}`;
     renderJobs();
     renderRecipients();
+    renderNotifications();
     await loadActivity();
 }
 
@@ -219,6 +308,21 @@ document.addEventListener('click', async (event) => {
     if (event.target.dataset.removeFile !== undefined) {
         state.editingFiles.splice(Number(event.target.dataset.removeFile), 1);
         renderFiles();
+    }
+    if (event.target.id === 'save-notifications') {
+        event.target.disabled = true;
+        try { await saveNotifications(); toast('Notifications saved'); }
+        catch (error) { $('#notification-error').textContent = error.message; }
+        finally { event.target.disabled = false; }
+    }
+    if (event.target.dataset.testNotification) {
+        event.target.disabled = true;
+        try {
+            await saveNotifications();
+            await api(`/api/notifications/test/${encodeURIComponent(event.target.dataset.testNotification)}`, { method: 'POST' });
+            toast('Test notification sent');
+        } catch (error) { $('#notification-error').textContent = error.message; }
+        finally { event.target.disabled = false; }
     }
     if (event.target.dataset.send) {
         event.target.disabled = true;

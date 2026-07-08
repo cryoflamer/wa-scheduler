@@ -97,3 +97,18 @@ textarea { resize: vertical; }
 .paused { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: #3d3216; color: #f2ca65; font-size: 10px; font-weight: 600; vertical-align: 2px; }
 .enabled-field { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 .enabled-field input { width: auto; margin: 0; }
+.notifications-title { margin-top: 30px; }
+.notifications { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.notification-card { background: #161a20; border: 1px solid #282e38; border-radius: 9px; padding: 12px 14px; }
+.notification-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.notification-card label { margin-bottom: 10px; }
+.switch-field { display: flex; align-items: center; gap: 7px; margin: 0 !important; white-space: nowrap; }
+.switch-field input, .notification-event input { width: auto; margin: 0; }
+.notification-events { display: grid; gap: 5px; margin: 2px 0 11px; }
+.notification-event { display: flex; align-items: center; gap: 7px; margin: 0 !important; color: #b9c3d1; }
+.notification-actions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.notification-actions .error { margin: 0 auto 0 0; }
+@media (max-width: 700px) {
+    .notifications { grid-template-columns: 1fr; }
+    .notification-actions { grid-column: 1; }
+}

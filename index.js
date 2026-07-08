@@ -3,6 +3,7 @@ require('dotenv').config();
 const { ActivityLog } = require('./src/activity');
 const { ensureLocalConfig, loadConfig } = require('./src/config');
 const { SchedulerManager } = require('./src/scheduler');
+const { NotificationManager } = require('./src/notifications/manager');
 const { StateStore } = require('./src/state');
 const { createShutdownHandler } = require('./src/runtime');
 const { createWhatsAppClient } = require('./src/whatsapp');
@@ -22,7 +23,9 @@ async function main() {
     }
     const stateStore = new StateStore(process.env.WA_STATE_FILE);
     const client = createWhatsAppClient(activity);
-    const schedulerManager = new SchedulerManager(client, stateStore, activity);
+    const notificationManager = new NotificationManager({ client, stateStore, activity });
+    notificationManager.apply(config.notifications);
+    const schedulerManager = new SchedulerManager(client, stateStore, activity, notificationManager);
     const status = { whatsapp: 'connecting', startedAt: new Date().toISOString() };
     const host = process.env.WA_UI_HOST || '127.0.0.1';
     const port = Number(process.env.WA_UI_PORT || 3000);
@@ -31,8 +34,13 @@ async function main() {
         status.whatsapp = 'authenticated';
     });
 
+    let disconnectSequence = 0;
     client.on('disconnected', () => {
         status.whatsapp = 'disconnected';
+        disconnectSequence += 1;
+        void notificationManager.notify('whatsapp.disconnected', {
+            idempotencyKey: `system:whatsapp.disconnected:${disconnectSequence}`
+        });
     });
 
     client.once('ready', () => {
@@ -47,7 +55,8 @@ async function main() {
         schedulerManager,
         configPath,
         status,
-        activity
+        activity,
+        notificationManager
     });
 
     const server = app.listen(port, host, () => {
@@ -58,7 +67,8 @@ async function main() {
         app,
         server,
         client,
-        activity
+        activity,
+        notificationManager
     });
 
     process.once('SIGTERM', () => {

@@ -163,3 +163,84 @@ test('the last local job can be deleted', async (t) => {
     assert.deepEqual(loadConfig(configPath, {}).jobs, []);
     assert.deepEqual(schedulerManager.config.jobs, []);
 });
+
+test('notification API masks ntfy topic and persists local notification settings', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-notifications-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const envPath = path.join(directory, '.env');
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: { enabled: false, recipient: '${WA_RECIPIENT_SELF}', events: ['job.completed'] },
+            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: ['job.failed'] }
+        },
+        jobs: []
+    }));
+    fs.writeFileSync(envPath, 'WA_RECIPIENT_SELF=380661234567\nWA_NTFY_TOPIC=old-private-topic\n');
+    process.env.WA_RECIPIENT_SELF = '380661234567';
+    process.env.WA_NTFY_TOPIC = 'old-private-topic';
+
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const applied = [];
+    const notificationManager = {
+        apply(config) { applied.push(config); },
+        async test() {}
+    };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager, notificationManager,
+        configPath, envPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_RECIPIENT_SELF;
+        delete process.env.WA_NTFY_TOPIC;
+    });
+    const { port } = server.address();
+
+    const before = await fetch(`http://127.0.0.1:${port}/api/notifications`).then((response) => response.json());
+    assert.equal(before.ntfy.topicConfigured, true);
+    assert.doesNotMatch(JSON.stringify(before), /old-private-topic/);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            whatsapp: { enabled: true, recipientKey: 'WA_RECIPIENT_SELF', events: ['job.completed', 'job.failed'] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'new-secret-topic', events: ['job.failed', 'whatsapp.disconnected'] }
+        })
+    });
+
+    assert.equal(response.status, 200);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    assert.equal(raw.notifications.whatsapp.recipient, '${WA_RECIPIENT_SELF}');
+    assert.equal(raw.notifications.ntfy.topic, '${WA_NTFY_TOPIC}');
+    assert.match(fs.readFileSync(envPath, 'utf8'), /WA_NTFY_TOPIC=new-secret-topic/);
+    assert.equal(applied.at(-1).ntfy.topic, 'new-secret-topic');
+});
+
+test('notification test API delegates to the selected provider', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-notification-test-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({ timezone: 'Europe/Kyiv', jobs: [] }));
+    const calls = [];
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager,
+        notificationManager: { apply() {}, async test(provider) { calls.push(provider); } },
+        configPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications/test/ntfy`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, ['ntfy']);
+});

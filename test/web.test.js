@@ -30,3 +30,27 @@ test('UI job serialization exposes operational status', () => {
     assert.equal(serialized.nextRun, '2026-07-13T05:00:00.000Z');
     assert.equal(serialized.lastRun.status, 'sent');
 });
+
+test('notification serialization exposes aliases and masks ntfy secrets', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const { serializeNotifications } = require('../src/web/server');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-ui-'));
+    const envPath = path.join(directory, '.env');
+    fs.writeFileSync(envPath, 'WA_NTFY_TOPIC=private-topic-value\n');
+
+    try {
+        const serialized = serializeNotifications({
+            notifications: {
+                whatsapp: { enabled: true, recipient: '${WA_RECIPIENT_SELF}', events: ['job.completed'] },
+                ntfy: { enabled: true, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: ['job.failed'] }
+            }
+        }, envPath);
+        assert.equal(serialized.whatsapp.recipientKey, 'WA_RECIPIENT_SELF');
+        assert.equal(serialized.ntfy.topicConfigured, true);
+        assert.doesNotMatch(JSON.stringify(serialized), /private-topic-value/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

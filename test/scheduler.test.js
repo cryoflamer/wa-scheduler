@@ -176,3 +176,52 @@ test('disabled jobs are not registered', () => {
         for (const { task } of tasks) task.destroy();
     }
 });
+
+test('scheduled run sends a completion notification after state is marked complete', async () => {
+    await withState(async (stateStore) => {
+        const calls = [];
+        const key = 'report:2026-07-13';
+        const job = {
+            id: 'report', recipient: '380660000000', message: 'Report', files: []
+        };
+        const notifications = {
+            async notify(type, context) {
+                calls.push([type, stateStore.isComplete(key), context.idempotencyKey, context.sentItems]);
+            }
+        };
+
+        await runJob({}, job, stateStore, key, {
+            sendText: async () => {}
+        }, null, notifications);
+
+        assert.deepEqual(calls, [['job.completed', true, key, 1]]);
+    });
+});
+
+test('partial scheduled failures notify with persisted progress', async () => {
+    await withState(async (stateStore) => {
+        const calls = [];
+        const notifications = {
+            apply() {},
+            async notify(type, context) {
+                calls.push([type, context.sentItems, context.idempotencyKey]);
+            }
+        };
+        const job = {
+            id: 'report', enabled: true, schedule: '* * * * *', recipient: '380660000000',
+            message: 'Report', files: [{ path: 'documents/report.pdf', caption: '' }]
+        };
+        const tasks = registerJobs({}, {
+            timezone: 'Europe/Kyiv', notifications: {}, jobs: [job]
+        }, stateStore, null, notifications);
+
+        try {
+            const key = `report:${dateKey(new Date(), 'Europe/Kyiv')}`;
+            stateStore.markMessageSent(key, new Date().toISOString());
+            await tasks[0].task.execute();
+            assert.deepEqual(calls, [['job.partial', 1, key]]);
+        } finally {
+            for (const { task } of tasks) task.destroy();
+        }
+    });
+});

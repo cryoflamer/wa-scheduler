@@ -26,7 +26,7 @@ function report(activity, method, type, fields, fallback) {
     }
 }
 
-async function runJob(client, job, stateStore, key, senders = {}, activity = null) {
+async function runJob(client, job, stateStore, key, senders = {}, activity = null, notifications = null) {
     const sendText = senders.sendText || sendTextMessage;
     const sendFile = senders.sendFile || sendDocument;
 
@@ -74,10 +74,19 @@ async function runJob(client, job, stateStore, key, senders = {}, activity = nul
         message: 'Job completed'
     }, `Job ${job.id} completed`);
 
+    if (notifications) {
+        const { sentItems } = stateStore.getRunProgress(key, job);
+        await notifications.notify('job.completed', {
+            job,
+            sentItems,
+            idempotencyKey: key
+        });
+    }
+
     return { status: 'sent' };
 }
 
-function registerJobs(client, config, stateStore, activity = null) {
+function registerJobs(client, config, stateStore, activity = null, notifications = null) {
     for (const job of config.jobs) {
         if (!cron.validate(job.schedule)) {
             throw new Error(`Invalid cron schedule for job ${job.id}: ${job.schedule}`);
@@ -102,13 +111,23 @@ function registerJobs(client, config, stateStore, activity = null) {
                 const key = `${job.id}:${dateKey(now, config.timezone)}`;
 
                 try {
-                    await runJob(client, job, stateStore, key, {}, activity);
+                    await runJob(client, job, stateStore, key, {}, activity, notifications);
                 } catch (error) {
                     stateStore.markRunFailed(key, new Date().toISOString());
                     report(activity, 'error', 'job.failed', {
                         jobId: job.id,
                         error
                     }, `Job ${job.id} failed: ${error.message}`);
+                    if (notifications) {
+                        const { sentItems, totalItems } = stateStore.getRunProgress(key, job);
+                        const type = sentItems > 0 && sentItems < totalItems ? 'job.partial' : 'job.failed';
+                        await notifications.notify(type, {
+                            job,
+                            error,
+                            sentItems,
+                            idempotencyKey: key
+                        });
+                    }
                 }
             },
             {
@@ -128,16 +147,18 @@ function registerJobs(client, config, stateStore, activity = null) {
 }
 
 class SchedulerManager {
-    constructor(client, stateStore, activity = null) {
+    constructor(client, stateStore, activity = null, notifications = null) {
         this.client = client;
         this.stateStore = stateStore;
         this.activity = activity;
+        this.notifications = notifications;
         this.tasks = [];
         this.config = null;
     }
 
     apply(config) {
-        const nextTasks = registerJobs(this.client, config, this.stateStore, this.activity);
+        this.notifications?.apply(config.notifications);
+        const nextTasks = registerJobs(this.client, config, this.stateStore, this.activity, this.notifications);
         this.stop();
         this.tasks = nextTasks;
         this.config = config;

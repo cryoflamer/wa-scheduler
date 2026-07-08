@@ -20,6 +20,9 @@ class StateStore {
     isComplete(key) { return this.state[key]?.status === 'sent'; }
     isMessageSent(key) { return this.state[key]?.message?.status === 'sent'; }
     isFileSent(key, filePath) { return this.state[key]?.files?.[filePath]?.status === 'sent'; }
+    isNotificationSent(key, eventType, provider) {
+        return this.state[key]?.notifications?.[eventType]?.[provider]?.status === 'sent';
+    }
 
     markRunStarted(key, startedAt) {
         const record = this.ensureJobRecord(key);
@@ -48,6 +51,24 @@ class StateStore {
         this.persist();
     }
 
+    markNotificationSent(key, eventType, provider, sentAt) {
+        const record = this.ensureJobRecord(key);
+        if (!record.notifications || typeof record.notifications !== 'object') record.notifications = {};
+        if (!record.notifications[eventType] || typeof record.notifications[eventType] !== 'object') {
+            record.notifications[eventType] = {};
+        }
+        record.notifications[eventType][provider] = { status: 'sent', sentAt };
+        this.persist();
+    }
+
+    getRunProgress(key, job) {
+        const record = this.state[key] || {};
+        const sentItems = (record.message?.status === 'sent' ? 1 : 0)
+            + job.files.filter((file) => record.files?.[file.path]?.status === 'sent').length;
+        const totalItems = (job.message ? 1 : 0) + job.files.length;
+        return { sentItems, totalItems };
+    }
+
     markComplete(key, sentAt) {
         const record = this.ensureJobRecord(key);
         record.status = 'sent';
@@ -69,9 +90,7 @@ class StateStore {
         if (entries.length === 0) return null;
 
         const [key, record] = entries[0];
-        const sentItems = (record.message?.status === 'sent' ? 1 : 0)
-            + job.files.filter((file) => record.files?.[file.path]?.status === 'sent').length;
-        const totalItems = (job.message ? 1 : 0) + job.files.length;
+        const { sentItems, totalItems } = this.getRunProgress(key, job);
         let status = record.status || 'pending';
         if (status === 'failed' && sentItems > 0 && sentItems < totalItems) status = 'partial';
 

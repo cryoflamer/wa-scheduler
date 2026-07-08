@@ -138,3 +138,13 @@ npm run service:remove
 ```
 
 The service starts wa-scheduler when the systemd user manager starts. On WSL, this does not itself launch the WSL distribution from a fully stopped Windows session; WSL/systemd must be running for the Linux user service to run.
+
+## Notifications
+
+The dashboard can notify the operator independently from the job recipient. Notification settings are local runtime configuration stored in the ignored `schedule.json` and `.env`.
+
+WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, and partial-send events can be enabled separately. Notification delivery state is persisted per scheduled run and provider, so a successful provider is not repeated when another provider is retried.
+
+For an independent phone push channel, enable the `ntfy` provider in the dashboard. The server defaults to `https://ntfy.sh`; the topic is stored locally as `WA_NTFY_TOPIC` in `.env` and is only exposed to the UI in masked form. Install an ntfy client on the phone, subscribe to the same topic, save the notification settings, and use **Send test** to verify delivery.
+
+The ntfy provider can report WhatsApp disconnections, which is useful because a disconnected WhatsApp session cannot reliably report its own failure through WhatsApp. Job notification messages contain the job id and item counts but do not include job message bodies, file captions, phone numbers, or ntfy topics.

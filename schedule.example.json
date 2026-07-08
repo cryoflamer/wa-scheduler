@@ -1,5 +1,27 @@
 {
   "timezone": "Europe/Kyiv",
+  "notifications": {
+    "whatsapp": {
+      "enabled": false,
+      "recipient": "${WA_RECIPIENT_SELF}",
+      "events": [
+        "job.completed",
+        "job.failed",
+        "job.partial"
+      ]
+    },
+    "ntfy": {
+      "enabled": false,
+      "server": "https://ntfy.sh",
+      "topic": "${WA_NTFY_TOPIC}",
+      "events": [
+        "job.completed",
+        "job.failed",
+        "job.partial",
+        "whatsapp.disconnected"
+      ]
+    }
+  },
   "jobs": [
     {
       "id": "monday-report",
