@@ -21,8 +21,12 @@ function lastRunLabel(lastRun) {
     const status = lastRun.status === 'sent' ? 'Completed'
         : lastRun.status === 'partial' ? `Partial · ${lastRun.sentItems}/${lastRun.totalItems} items`
             : lastRun.status === 'failed' ? 'Failed'
-                : lastRun.status === 'running' ? 'Running' : lastRun.status;
-    return `Last: ${status} · ${formatDateTime(lastRun.timestamp || `${lastRun.date}T00:00:00`)}`;
+                : lastRun.status === 'retrying' ? `Retry ${lastRun.retry?.attempt || '?'} pending`
+                    : lastRun.status === 'running' ? 'Running' : lastRun.status;
+    const timestamp = lastRun.status === 'retrying' && lastRun.retry?.nextRetryAt
+        ? lastRun.retry.nextRetryAt
+        : lastRun.timestamp || `${lastRun.date}T00:00:00`;
+    return `Last: ${status} · ${formatDateTime(timestamp)}`;
 }
 
 async function api(url, options = {}) {
@@ -62,6 +66,9 @@ const notificationEventLabels = {
     'job.completed': 'Job completed',
     'job.failed': 'Job failed',
     'job.partial': 'Job partially sent',
+    'job.retry.scheduled': 'Retry scheduled',
+    'job.recovered': 'Job recovered',
+    'job.retry.exhausted': 'Retries exhausted',
     'job.manual.completed': 'Manual send completed',
     'job.manual.failed': 'Manual send failed',
     'job.manual.partial': 'Manual send partially sent',
@@ -113,6 +120,7 @@ function renderNotifications() {
             <div class="notification-events">
                 ${notificationEventChecks('whatsapp', config.whatsapp.events, [
                     'job.completed', 'job.failed', 'job.partial',
+                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                 ])}
             </div>
@@ -135,6 +143,7 @@ function renderNotifications() {
             <div class="notification-events">
                 ${notificationEventChecks('ntfy', config.ntfy.events, [
                     'job.completed', 'job.failed', 'job.partial',
+                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                     'whatsapp.disconnected'
                 ])}
@@ -334,6 +343,7 @@ async function refresh() {
     $('#summary').textContent = `${status.activeJobs}/${jobs.jobs.length} active · ${jobs.timezone}${since}`;
     $('#wa-status').textContent = status.whatsapp;
     $('#wa-status').className = `status ${status.whatsapp}`;
+    $('#activity-retention').textContent = `Keeping ${status.activityRetentionDays} days`;
     renderJobs();
     renderRecipients();
     renderNotifications();
@@ -366,6 +376,10 @@ function formToCron() {
     return `${Number(minute)} ${Number(hour)} ${Number($('#monthday').value)} * *`;
 }
 
+function updateRetryFields() {
+    $('#job-retry-fields').hidden = !$('#job-retry-enabled').checked;
+}
+
 function updateScheduleFields() {
     const mode = $('#schedule-mode').value;
     $('#weekday-wrap').hidden = mode !== 'weekly';
@@ -392,6 +406,9 @@ function openJob(job = null) {
     $('#job-id').value = job?.id || '';
     $('#job-enabled').checked = job?.enabled !== false;
     $('#job-message').value = job?.message || '';
+    $('#job-retry-enabled').checked = Number(job?.retry?.attempts || 0) > 0;
+    $('#job-retry-attempts').value = job?.retry?.attempts || 5;
+    $('#job-retry-delay').value = job?.retry?.delayMinutes || 10;
     renderRecipientOptions(job?.recipientKey || '');
     state.editingFiles = structuredClone(job?.files || []);
     const schedule = cronToForm(job?.schedule || '0 8 * * *');
@@ -401,12 +418,14 @@ function openJob(job = null) {
     $('#monthday').value = schedule.monthday || '1';
     $('#cron').value = schedule.cron || '';
     updateScheduleFields();
+    updateRetryFields();
     renderFiles();
     jobDialog.showModal();
 }
 
 $('#weekday').innerHTML = weekdays.map((day, index) => `<option value="${index}">${day}</option>`).join('');
 $('#schedule-mode').addEventListener('change', updateScheduleFields);
+$('#job-retry-enabled').addEventListener('change', updateRetryFields);
 $('#add-job').addEventListener('click', () => openJob());
 $('#add-recipient').addEventListener('click', () => {
     $('#recipient-form').reset();
@@ -524,6 +543,9 @@ $('#job-form').addEventListener('submit', async (event) => {
         id: $('#job-id').value,
         enabled: $('#job-enabled').checked,
         schedule: formToCron(),
+        retryEnabled: $('#job-retry-enabled').checked,
+        retryAttempts: Number($('#job-retry-attempts').value),
+        retryDelayMinutes: Number($('#job-retry-delay').value),
         recipientKey: $('#job-recipient').value,
         message: $('#job-message').value,
         files: state.editingFiles

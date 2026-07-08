@@ -26,9 +26,22 @@ function report(activity, method, type, fields, fallback) {
     }
 }
 
-async function runJob(client, job, stateStore, key, senders = {}, activity = null, notifications = null) {
+async function runJob(
+    client,
+    job,
+    stateStore,
+    key,
+    senders = {},
+    activity = null,
+    notifications = null,
+    options = {}
+) {
     const sendText = senders.sendText || sendTextMessage;
     const sendFile = senders.sendFile || sendDocument;
+    const completionType = options.completionType || 'job.completed';
+    const completionMessage = completionType === 'job.recovered'
+        ? `Job recovered on retry ${options.retryAttempt} of ${options.maxRetries}`
+        : 'Job completed';
 
     if (stateStore.isComplete(key)) {
         report(activity, 'skipped', 'job.skipped', {
@@ -39,10 +52,15 @@ async function runJob(client, job, stateStore, key, senders = {}, activity = nul
     }
 
     stateStore.markRunStarted(key, new Date().toISOString());
-    report(activity, 'info', 'job.started', {
+    report(activity, 'info', options.retryAttempt ? 'job.retry.started' : 'job.started', {
         jobId: job.id,
-        message: 'Job started'
-    }, `Job ${job.id} started`);
+        message: options.retryAttempt
+            ? `Retry ${options.retryAttempt} of ${options.maxRetries} started`
+            : 'Job started',
+        ...(options.retryAttempt ? { details: { retryAttempt: options.retryAttempt, maxRetries: options.maxRetries } } : {})
+    }, options.retryAttempt
+        ? `Job ${job.id} retry ${options.retryAttempt} of ${options.maxRetries} started`
+        : `Job ${job.id} started`);
 
     if (job.message && !stateStore.isMessageSent(key)) {
         await sendText(client, job.recipient, job.message);
@@ -69,25 +87,63 @@ async function runJob(client, job, stateStore, key, senders = {}, activity = nul
     }
 
     stateStore.markComplete(key, new Date().toISOString());
-    report(activity, 'sent', 'job.completed', {
+    report(activity, 'sent', completionType, {
         jobId: job.id,
-        message: 'Job completed'
-    }, `Job ${job.id} completed`);
+        message: completionMessage,
+        ...(options.retryAttempt ? { details: { retryAttempt: options.retryAttempt, maxRetries: options.maxRetries } } : {})
+    }, completionType === 'job.recovered'
+        ? `Job ${job.id} recovered on retry ${options.retryAttempt} of ${options.maxRetries}`
+        : `Job ${job.id} completed`);
 
     if (notifications) {
         const progress = stateStore.getRunDetails(key, job);
-        await notifications.notify('job.completed', {
+        await notifications.notify(completionType, {
             job,
             sentItems: progress.sentItems,
             progress,
-            idempotencyKey: key
+            idempotencyKey: key,
+            retryAttempt: options.retryAttempt || 0,
+            maxRetries: options.maxRetries || 0
         });
     }
 
     return { status: 'sent' };
 }
 
-function registerJobs(client, config, stateStore, activity = null, notifications = null) {
+function retryPolicy(job) {
+    return {
+        attempts: Number(job?.retry?.attempts || 0),
+        delayMinutes: Number(job?.retry?.delayMinutes || 10)
+    };
+}
+
+function failureType(progress) {
+    return progress.sentItems > 0 && progress.sentItems < progress.totalItems ? 'job.partial' : 'job.failed';
+}
+
+async function runLegacyScheduled(client, job, stateStore, key, activity, notifications) {
+    try {
+        await runJob(client, job, stateStore, key, {}, activity, notifications);
+    } catch (error) {
+        stateStore.markRunFailed(key, new Date().toISOString());
+        report(activity, 'error', 'job.failed', {
+            jobId: job.id,
+            error
+        }, `Job ${job.id} failed: ${error.message}`);
+        if (notifications) {
+            const progress = stateStore.getRunDetails(key, job);
+            await notifications.notify(failureType(progress), {
+                job,
+                error,
+                sentItems: progress.sentItems,
+                progress,
+                idempotencyKey: key
+            });
+        }
+    }
+}
+
+function registerJobs(client, config, stateStore, activity = null, notifications = null, runScheduled = null) {
     for (const job of config.jobs) {
         if (!cron.validate(job.schedule)) {
             throw new Error(`Invalid cron schedule for job ${job.id}: ${job.schedule}`);
@@ -108,28 +164,11 @@ function registerJobs(client, config, stateStore, activity = null, notifications
         const task = cron.schedule(
             job.schedule,
             async () => {
-                const now = new Date();
-                const key = `${job.id}:${dateKey(now, config.timezone)}`;
-
-                try {
-                    await runJob(client, job, stateStore, key, {}, activity, notifications);
-                } catch (error) {
-                    stateStore.markRunFailed(key, new Date().toISOString());
-                    report(activity, 'error', 'job.failed', {
-                        jobId: job.id,
-                        error
-                    }, `Job ${job.id} failed: ${error.message}`);
-                    if (notifications) {
-                        const progress = stateStore.getRunDetails(key, job);
-                        const type = progress.sentItems > 0 && progress.sentItems < progress.totalItems ? 'job.partial' : 'job.failed';
-                        await notifications.notify(type, {
-                            job,
-                            error,
-                            sentItems: progress.sentItems,
-                            progress,
-                            idempotencyKey: key
-                        });
-                    }
+                const key = `${job.id}:${dateKey(new Date(), config.timezone)}`;
+                if (runScheduled) {
+                    await runScheduled(job, key, config);
+                } else {
+                    await runLegacyScheduled(client, job, stateStore, key, activity, notifications);
                 }
             },
             {
@@ -149,25 +188,161 @@ function registerJobs(client, config, stateStore, activity = null, notifications
 }
 
 class SchedulerManager {
-    constructor(client, stateStore, activity = null, notifications = null) {
+    constructor(client, stateStore, activity = null, notifications = null, options = {}) {
         this.client = client;
         this.stateStore = stateStore;
         this.activity = activity;
         this.notifications = notifications;
         this.tasks = [];
         this.config = null;
+        this.retryTimers = new Map();
+        this.activeRunKeys = new Set();
+        this.setTimeout = options.setTimeout || setTimeout;
+        this.clearTimeout = options.clearTimeout || clearTimeout;
+        this.now = options.now || (() => new Date());
     }
 
     apply(config) {
         this.notifications?.apply(config.notifications);
-        const nextTasks = registerJobs(this.client, config, this.stateStore, this.activity, this.notifications);
         this.stop();
-        this.tasks = nextTasks;
         this.config = config;
+        this.tasks = registerJobs(
+            this.client,
+            config,
+            this.stateStore,
+            this.activity,
+            this.notifications,
+            (job, key) => this.executeScheduled(job, key, 0)
+        );
+        this.resumePendingRetries();
+    }
+
+    async executeScheduled(job, key, retryAttempt = 0) {
+        if (this.activeRunKeys.has(key)) {
+            report(this.activity, 'skipped', 'job.retry.overlap', {
+                jobId: job.id,
+                message: 'Run already active; skipping overlapping attempt'
+            }, `Job ${job.id} run already active; skipping`);
+            return { status: 'overlap' };
+        }
+
+        this.activeRunKeys.add(key);
+        try {
+            const policy = retryPolicy(job);
+            const maxRetries = policy.attempts;
+            const result = await runJob(
+                this.client,
+                job,
+                this.stateStore,
+                key,
+                {},
+                this.activity,
+                this.notifications,
+                retryAttempt > 0
+                    ? { completionType: 'job.recovered', retryAttempt, maxRetries }
+                    : {}
+            );
+            this.clearRetryTimer(key);
+            return result;
+        } catch (error) {
+            const failedAt = this.now().toISOString();
+            this.stateStore.markRunFailed(key, failedAt);
+            const progress = this.stateStore.getRunDetails(key, job);
+            const policy = retryPolicy(job);
+            const maxRetries = policy.attempts;
+
+            report(this.activity, 'error', retryAttempt > 0 ? 'job.retry.failed' : 'job.failed', {
+                jobId: job.id,
+                error,
+                ...(retryAttempt > 0 ? { details: { retryAttempt, maxRetries } } : {})
+            }, retryAttempt > 0
+                ? `Job ${job.id} retry ${retryAttempt} of ${maxRetries} failed: ${error.message}`
+                : `Job ${job.id} failed: ${error.message}`);
+
+            if (retryAttempt < maxRetries) {
+                const nextAttempt = retryAttempt + 1;
+                const nextRetryAt = new Date(this.now().getTime() + policy.delayMinutes * 60_000).toISOString();
+                this.stateStore.markRetryScheduled(key, nextAttempt, nextRetryAt);
+                report(this.activity, 'info', 'job.retry.scheduled', {
+                    jobId: job.id,
+                    message: `Retry ${nextAttempt} of ${maxRetries} scheduled in ${policy.delayMinutes} minutes`,
+                    details: { retryAttempt: nextAttempt, maxRetries, nextRetryAt }
+                }, `Job ${job.id} retry ${nextAttempt} of ${maxRetries} scheduled in ${policy.delayMinutes} minutes`);
+
+                if (this.notifications) {
+                    await this.notifications.notify('job.retry.scheduled', {
+                        job,
+                        error,
+                        sentItems: progress.sentItems,
+                        progress,
+                        idempotencyKey: key,
+                        retryAttempt: nextAttempt,
+                        maxRetries,
+                        delayMinutes: policy.delayMinutes
+                    });
+                }
+
+                this.scheduleRetry(job, key, nextAttempt, nextRetryAt);
+                return { status: 'retrying', retryAttempt: nextAttempt, nextRetryAt };
+            }
+
+            this.stateStore.clearRetry(key);
+            if (this.notifications) {
+                const type = maxRetries > 0 ? 'job.retry.exhausted' : failureType(progress);
+                await this.notifications.notify(type, {
+                    job,
+                    error,
+                    sentItems: progress.sentItems,
+                    progress,
+                    idempotencyKey: key,
+                    retryAttempt,
+                    maxRetries
+                });
+            }
+            return { status: 'failed', error };
+        } finally {
+            this.activeRunKeys.delete(key);
+        }
+    }
+
+    scheduleRetry(job, key, retryAttempt, nextRetryAt) {
+        this.clearRetryTimer(key);
+        const delay = Math.max(0, new Date(nextRetryAt).getTime() - this.now().getTime());
+        const timer = this.setTimeout(() => {
+            this.retryTimers.delete(key);
+            void this.executeScheduled(job, key, retryAttempt);
+        }, delay);
+        timer?.unref?.();
+        this.retryTimers.set(key, timer);
+    }
+
+    resumePendingRetries() {
+        if (!this.config) return;
+        const jobsById = new Map(this.config.jobs.filter((job) => job.enabled).map((job) => [job.id, job]));
+        for (const pending of this.stateStore.listPendingRetries()) {
+            const job = jobsById.get(pending.jobId);
+            if (!job || pending.retryAttempt > retryPolicy(job).attempts) continue;
+            this.scheduleRetry(job, pending.key, pending.retryAttempt, pending.nextRetryAt);
+            report(this.activity, 'info', 'job.retry.resumed', {
+                jobId: job.id,
+                message: `Retry ${pending.retryAttempt} of ${retryPolicy(job).attempts} resumed`,
+                details: {
+                    retryAttempt: pending.retryAttempt,
+                    maxRetries: retryPolicy(job).attempts,
+                    nextRetryAt: pending.nextRetryAt
+                }
+            }, `Job ${job.id} retry ${pending.retryAttempt} resumed`);
+        }
     }
 
     getNextRun(jobId) {
         return this.tasks.find((entry) => entry.jobId === jobId)?.task.getNextRun() || null;
+    }
+
+    clearRetryTimer(key) {
+        const timer = this.retryTimers.get(key);
+        if (timer) this.clearTimeout(timer);
+        this.retryTimers.delete(key);
     }
 
     stop() {
@@ -175,6 +350,7 @@ class SchedulerManager {
             task.destroy();
         }
         this.tasks = [];
+        for (const key of [...this.retryTimers.keys()]) this.clearRetryTimer(key);
     }
 }
 

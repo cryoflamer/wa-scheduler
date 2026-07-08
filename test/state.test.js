@@ -59,7 +59,8 @@ test('latest scheduled run reports completed and partial job status', () => {
             status: 'partial',
             sentItems: 1,
             totalItems: 3,
-            timestamp: '2026-07-13T05:00:02.000Z'
+            timestamp: '2026-07-13T05:00:02.000Z',
+            retry: null
         });
     });
 });
@@ -121,4 +122,26 @@ test('run details identify sent and pending message and file items', () => {
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
+});
+
+
+test('retry state is persisted and exposed as a pending scheduled run', () => {
+    withStore((store) => {
+        const key = 'report:2026-07-13';
+        const job = { id: 'report', message: 'Message', files: [] };
+        store.markRunStarted(key, '2026-07-13T05:00:00.000Z');
+        store.markRunFailed(key, '2026-07-13T05:00:01.000Z');
+        store.markRetryScheduled(key, 2, '2026-07-13T05:10:01.000Z');
+
+        assert.deepEqual(store.listPendingRetries(), [{
+            key,
+            jobId: 'report',
+            retryAttempt: 2,
+            nextRetryAt: '2026-07-13T05:10:01.000Z'
+        }]);
+        assert.deepEqual(store.getLatestScheduledRun(job).retry, {
+            attempt: 2,
+            nextRetryAt: '2026-07-13T05:10:01.000Z'
+        });
+    });
 });

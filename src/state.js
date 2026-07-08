@@ -27,7 +27,7 @@ class StateStore {
     markRunStarted(key, startedAt) {
         const record = this.ensureJobRecord(key);
         record.status = record.status === 'sent' ? 'sent' : 'running';
-        record.startedAt = startedAt;
+        record.startedAt ||= startedAt;
         delete record.failedAt;
         this.persist();
     }
@@ -37,6 +37,34 @@ class StateStore {
         if (record.status !== 'sent') record.status = 'failed';
         record.failedAt = failedAt;
         this.persist();
+    }
+
+    markRetryScheduled(key, retryAttempt, nextRetryAt) {
+        const record = this.ensureJobRecord(key);
+        if (record.status !== 'sent') record.status = 'retrying';
+        record.retry = { attempt: retryAttempt, nextRetryAt };
+        this.persist();
+    }
+
+    clearRetry(key) {
+        const record = this.state[key];
+        if (!record || typeof record !== 'object') return;
+        delete record.retry;
+        this.persist();
+    }
+
+    listPendingRetries() {
+        return Object.entries(this.state).flatMap(([key, record]) => {
+            if (record?.status !== 'retrying' || !record.retry?.nextRetryAt) return [];
+            const separator = key.lastIndexOf(':');
+            if (separator <= 0) return [];
+            return [{
+                key,
+                jobId: key.slice(0, separator),
+                retryAttempt: Number(record.retry.attempt),
+                nextRetryAt: record.retry.nextRetryAt
+            }];
+        }).filter((entry) => Number.isInteger(entry.retryAttempt) && entry.retryAttempt > 0);
     }
 
     markMessageSent(key, sentAt) {
@@ -101,6 +129,7 @@ class StateStore {
         record.status = 'sent';
         record.sentAt = sentAt;
         delete record.failedAt;
+        delete record.retry;
         this.persist();
     }
 
@@ -127,7 +156,8 @@ class StateStore {
             status,
             sentItems,
             totalItems,
-            timestamp: record.sentAt || record.failedAt || record.startedAt || null
+            timestamp: record.sentAt || record.failedAt || record.startedAt || null,
+            retry: record.retry || null
         };
     }
 

@@ -28,6 +28,9 @@ const NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.retry.scheduled',
+    'job.recovered',
+    'job.retry.exhausted',
     'job.manual.completed',
     'job.manual.failed',
     'job.manual.partial',
@@ -115,6 +118,7 @@ function serializeJob(job, runtime = {}) {
         recipientKey: recipientKey(job.recipient),
         message: job.message || '',
         files,
+        retry: job.retry || { attempts: 0, delayMinutes: 10 },
         nextRun: nextRun ? nextRun.toISOString() : null,
         lastRun
     };
@@ -125,6 +129,9 @@ function jobFromBody(body) {
     const schedule = String(body.schedule || '').trim();
     const recipient = String(body.recipientKey || '').trim();
     const message = String(body.message || '');
+    const retryEnabled = body.retryEnabled === true;
+    const retryAttempts = retryEnabled ? Number(body.retryAttempts) : 0;
+    const retryDelayMinutes = Number(body.retryDelayMinutes || 10);
     const files = Array.isArray(body.files)
         ? body.files.map((file) => ({
             path: String(file.path || '').trim(),
@@ -144,6 +151,7 @@ function jobFromBody(body) {
         schedule,
         recipient: `\${${recipient}}`,
         enabled: body.enabled !== false,
+        retry: { attempts: retryAttempts, delayMinutes: retryDelayMinutes },
         message,
         files
     };
@@ -161,13 +169,14 @@ function serializeNotifications(raw, envPath = '.env') {
     const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
 
     return {
-        version: 2,
+        version: 3,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             recipientKey: recipientKey(whatsapp.recipient),
             includeMessage: whatsapp.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(whatsapp.events || [
                 'job.completed', 'job.failed', 'job.partial',
+                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
             ]), raw.notifications?.version)
         },
@@ -180,6 +189,7 @@ function serializeNotifications(raw, envPath = '.env') {
             includeMessage: ntfy.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(ntfy.events || [
                 'job.completed', 'job.failed', 'job.partial',
+                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                 'whatsapp.disconnected'
             ]), raw.notifications?.version)
@@ -203,13 +213,14 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
     if (topic) saveEnvValue(NTFY_TOPIC_KEY, topic, envPath);
 
     return {
-        version: 2,
+        version: 3,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             includeMessage: whatsapp.includeMessage === true,
             recipient: recipient ? `\${${recipient}}` : currentRaw.notifications?.whatsapp?.recipient || '',
             events: normalizeUiEvents(whatsapp.events, [
                 'job.completed', 'job.failed', 'job.partial',
+                'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
             ])
         },
@@ -302,7 +313,8 @@ function createWebServer(options) {
             timezone: schedulerManager.config?.timezone || null,
             jobs: schedulerManager.config?.jobs.length || 0,
             activeJobs: schedulerManager.tasks.length,
-            startedAt: status.startedAt || null
+            startedAt: status.startedAt || null,
+            activityRetentionDays: activity?.retentionDays || 30
         });
     });
 
@@ -568,5 +580,6 @@ module.exports = {
     sanitizeUploadFilename,
     serializeNotifications,
     serializeJob,
-    uniqueUploadFilename
+    uniqueUploadFilename,
+    jobFromBody
 };

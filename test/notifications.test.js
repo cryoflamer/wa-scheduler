@@ -254,3 +254,30 @@ test('notification tests are unique and expose ntfy acknowledgement ids in activ
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('retry notifications explain scheduled retry, recovery, and exhaustion', () => {
+    const job = {
+        id: 'report', recipient: '380660000000', message: 'Report',
+        files: [{ path: 'documents/report.pdf', caption: '' }]
+    };
+    const progress = {
+        sentItems: 1, totalItems: 2,
+        sent: [{ type: 'message', label: 'message', sent: true }],
+        pending: [{ type: 'file', label: 'report.pdf', sent: false }]
+    };
+
+    const scheduled = buildNotification('job.retry.scheduled', {
+        job, progress, error: new Error('offline'), retryAttempt: 1, maxRetries: 5, delayMinutes: 10
+    });
+    const recovered = buildNotification('job.recovered', {
+        job, progress: { ...progress, sentItems: 2, sent: [...progress.sent, { type: 'file', label: 'report.pdf', sent: true }], pending: [] },
+        retryAttempt: 2, maxRetries: 5
+    });
+    const exhausted = buildNotification('job.retry.exhausted', {
+        job, progress, error: new Error('offline'), retryAttempt: 5, maxRetries: 5
+    });
+
+    assert.match(scheduled.message, /Retry 1 of 5 scheduled in 10 minutes/);
+    assert.match(recovered.message, /Completed on retry 2 of 5/);
+    assert.match(exhausted.message, /Automatic retries exhausted: 5 of 5/);
+});

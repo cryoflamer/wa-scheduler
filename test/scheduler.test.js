@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { dateKey, registerJobs, runJob } = require('../src/scheduler');
+const { dateKey, registerJobs, runJob, SchedulerManager } = require('../src/scheduler');
 const { StateStore } = require('../src/state');
 
 function withState(callback) {
@@ -223,5 +223,103 @@ test('partial scheduled failures notify with persisted progress', async () => {
         } finally {
             for (const { task } of tasks) task.destroy();
         }
+    });
+});
+
+
+test('scheduled failures retry silently and recover without resending completed items', async () => {
+    await withState(async (stateStore) => {
+        let sendCalls = 0;
+        const notifications = [];
+        const client = {
+            async sendMessage() {
+                sendCalls += 1;
+                if (sendCalls < 3) throw new Error('temporary outage');
+            }
+        };
+        const notificationManager = {
+            apply() {},
+            async notify(type, context) {
+                notifications.push([type, context.retryAttempt || 0, context.maxRetries || 0]);
+            }
+        };
+        const manager = new SchedulerManager(client, stateStore, null, notificationManager);
+        const job = {
+            id: 'report', enabled: true, schedule: '0 8 * * *', recipient: '380660000000',
+            retry: { attempts: 2, delayMinutes: 10 }, message: 'Report', files: []
+        };
+        const key = 'report:2026-07-13';
+
+        assert.equal((await manager.executeScheduled(job, key, 0)).status, 'retrying');
+        assert.equal((await manager.executeScheduled(job, key, 1)).status, 'retrying');
+        assert.equal((await manager.executeScheduled(job, key, 2)).status, 'sent');
+
+        assert.equal(sendCalls, 3);
+        assert.equal(stateStore.isComplete(key), true);
+        assert.deepEqual(notifications, [
+            ['job.retry.scheduled', 1, 2],
+            ['job.retry.scheduled', 2, 2],
+            ['job.recovered', 2, 2]
+        ]);
+        manager.stop();
+    });
+});
+
+test('retry exhaustion sends one initial retry notice and one exhausted notice', async () => {
+    await withState(async (stateStore) => {
+        const notifications = [];
+        const client = { async sendMessage() { throw new Error('offline'); } };
+        const manager = new SchedulerManager(client, stateStore, null, {
+            apply() {},
+            async notify(type, context) {
+                notifications.push([type, context.retryAttempt || 0]);
+            }
+        });
+        const job = {
+            id: 'report', enabled: true, schedule: '0 8 * * *', recipient: '380660000000',
+            retry: { attempts: 2, delayMinutes: 10 }, message: 'Report', files: []
+        };
+        const key = 'report:2026-07-13';
+
+        await manager.executeScheduled(job, key, 0);
+        await manager.executeScheduled(job, key, 1);
+        const result = await manager.executeScheduled(job, key, 2);
+
+        assert.equal(result.status, 'failed');
+        assert.deepEqual(notifications, [
+            ['job.retry.scheduled', 1],
+            ['job.retry.scheduled', 2],
+            ['job.retry.exhausted', 2]
+        ]);
+        assert.deepEqual(stateStore.listPendingRetries(), []);
+        manager.stop();
+    });
+});
+
+test('pending retry state is resumed when scheduler configuration is applied', async () => {
+    await withState(async (stateStore) => {
+        const key = 'report:2026-07-13';
+        stateStore.markRetryScheduled(key, 2, '2026-07-13T05:10:00.000Z');
+        const timers = [];
+        const manager = new SchedulerManager({}, stateStore, null, { apply() {} }, {
+            now: () => new Date('2026-07-13T05:00:00.000Z'),
+            setTimeout(callback, delay) {
+                const timer = { callback, delay, unref() {} };
+                timers.push(timer);
+                return timer;
+            },
+            clearTimeout() {}
+        });
+        const config = {
+            timezone: 'Europe/Kyiv', notifications: {}, jobs: [{
+                id: 'report', enabled: true, schedule: '0 8 * * *', recipient: '380660000000',
+                retry: { attempts: 5, delayMinutes: 10 }, message: 'Report', files: []
+            }]
+        };
+
+        manager.apply(config);
+        assert.equal(timers.length, 1);
+        assert.equal(timers[0].delay, 10 * 60 * 1000);
+        manager.stop();
     });
 });

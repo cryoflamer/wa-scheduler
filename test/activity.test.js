@@ -72,3 +72,23 @@ test('activity subscribers receive new events and clear notifications', () => {
     assert.deepEqual(received, ['job.started']);
     assert.equal(cleared, 1);
 });
+
+test('activity log prunes events older than the retention window on startup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-activity-retention-'));
+    const activityPath = path.join(directory, 'activity.jsonl');
+    fs.writeFileSync(activityPath, [
+        JSON.stringify({ id: 'old', timestamp: '2026-06-01T00:00:00.000Z', level: 'info', type: 'old', message: 'old' }),
+        JSON.stringify({ id: 'new', timestamp: '2026-07-01T00:00:00.000Z', level: 'info', type: 'new', message: 'new' })
+    ].join('\n') + '\n');
+
+    const activity = new ActivityLog(activityPath, { retentionDays: 30 });
+    assert.deepEqual(activity.readAll().map((event) => event.id), ['new']);
+    fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('activity retention defaults to 30 days and rejects invalid values', () => {
+    const { retentionDays } = require('../src/activity');
+    assert.equal(retentionDays(undefined), 30);
+    assert.equal(retentionDays('45'), 45);
+    assert.throws(() => retentionDays('0'), /WA_ACTIVITY_RETENTION_DAYS/);
+});

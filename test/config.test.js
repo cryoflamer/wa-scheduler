@@ -40,6 +40,7 @@ test('schedule configuration normalizes message and files', () => {
                     recipient: '',
                     events: [
                         'job.completed', 'job.failed', 'job.partial',
+                        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                         'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                     ],
                     includeMessage: false
@@ -50,6 +51,7 @@ test('schedule configuration normalizes message and files', () => {
                     topic: '',
                     events: [
                         'job.completed', 'job.failed', 'job.partial',
+                        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                         'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                         'whatsapp.disconnected'
                     ],
@@ -61,6 +63,7 @@ test('schedule configuration normalizes message and files', () => {
                 schedule: '0 8 * * 1',
                 recipient: '+380 66 000 00 00',
                 enabled: true,
+                retry: { attempts: 0, delayMinutes: 10 },
                 message: 'Reports are attached',
                 files: [
                     { path: 'documents/report.pdf', caption: '' },
@@ -87,6 +90,7 @@ test('legacy single-document configuration is normalized', () => {
             schedule: '0 8 * * 1',
             recipient: '380660000000',
             enabled: true,
+            retry: { attempts: 0, delayMinutes: 10 },
             message: '',
             files: [{ path: 'documents/report.pdf', caption: 'Report' }]
         });
@@ -119,6 +123,7 @@ test('environment variables are expanded in nested schedule values', () => {
             schedule: '0 8 * * 1',
             recipient: '380660000000',
             enabled: true,
+            retry: { attempts: 0, delayMinutes: 10 },
             message: 'Report for Monday',
             files: [{ path: 'documents/report.pdf', caption: 'Appendix' }]
         });
@@ -238,10 +243,12 @@ test('empty jobs array is a valid local schedule', () => {
             notifications: {
                 whatsapp: { enabled: false, recipient: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
+                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
                 ], includeMessage: false },
                 ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
+                    'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                     'whatsapp.disconnected'
                 ], includeMessage: false }
@@ -277,14 +284,14 @@ test('notification providers are normalized with environment-backed secrets', ()
         assert.deepEqual(notifications.whatsapp, {
             enabled: true,
             recipient: '380660000000',
-            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed'],
+            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed', 'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted'],
             includeMessage: false
         });
         assert.deepEqual(notifications.ntfy, {
             enabled: true,
             server: 'https://ntfy.sh',
             topic: 'private-topic',
-            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed'],
+            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed', 'job.retry.scheduled', 'job.retry.exhausted'],
             includeMessage: false
         });
     });
@@ -334,10 +341,12 @@ test('legacy notification settings inherit manual send events', () => {
     }, {});
 
     assert.deepEqual(normalized.whatsapp.events, [
-        'job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed'
+        'job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed',
+        'job.retry.scheduled', 'job.recovered', 'job.retry.exhausted'
     ]);
     assert.deepEqual(normalized.ntfy.events, [
-        'job.partial', 'whatsapp.disconnected', 'job.manual.partial'
+        'job.partial', 'whatsapp.disconnected', 'job.manual.partial',
+        'job.retry.scheduled', 'job.retry.exhausted'
     ]);
 });
 
@@ -349,6 +358,40 @@ test('notification settings version 2 can disable manual send events explicitly'
         ntfy: { enabled: false, events: ['job.failed'] }
     }, {});
 
-    assert.deepEqual(normalized.whatsapp.events, ['job.completed']);
-    assert.deepEqual(normalized.ntfy.events, ['job.failed']);
+    assert.deepEqual(normalized.whatsapp.events, [
+        'job.completed', 'job.recovered'
+    ]);
+    assert.deepEqual(normalized.ntfy.events, [
+        'job.failed', 'job.retry.scheduled', 'job.retry.exhausted'
+    ]);
+});
+
+
+test('retry policy is disabled by default and validates configured limits', () => {
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{ id: 'report', schedule: '0 8 * * *', recipient: '380660000000', message: 'Report' }]
+    }, (configPath) => {
+        assert.deepEqual(loadConfig(configPath, {}).jobs[0].retry, { attempts: 0, delayMinutes: 10 });
+    });
+
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report', schedule: '0 8 * * *', recipient: '380660000000', message: 'Report',
+            retry: { attempts: 5, delayMinutes: 10 }
+        }]
+    }, (configPath) => {
+        assert.deepEqual(loadConfig(configPath, {}).jobs[0].retry, { attempts: 5, delayMinutes: 10 });
+    });
+
+    withConfig({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report', schedule: '0 8 * * *', recipient: '380660000000', message: 'Report',
+            retry: { attempts: 21, delayMinutes: 10 }
+        }]
+    }, (configPath) => {
+        assert.throws(() => loadConfig(configPath, {}), /retry\.attempts must be an integer between 0 and 20/);
+    });
 });

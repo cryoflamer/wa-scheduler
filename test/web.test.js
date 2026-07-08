@@ -56,3 +56,19 @@ test('notification serialization exposes aliases and masks ntfy secrets', () => 
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('UI job serialization includes retry policy', () => {
+    const { serializeJob, jobFromBody } = require('../src/web/server');
+    const serialized = serializeJob({
+        id: 'report', schedule: '0 8 * * *', recipient: '${WA_RECIPIENT_SELF}',
+        retry: { attempts: 5, delayMinutes: 10 }, message: 'Report', files: []
+    });
+    assert.deepEqual(serialized.retry, { attempts: 5, delayMinutes: 10 });
+
+    const raw = jobFromBody({
+        id: 'report', schedule: '0 8 * * *', recipientKey: 'WA_RECIPIENT_SELF',
+        retryEnabled: true, retryAttempts: 4, retryDelayMinutes: 15,
+        message: 'Report', files: []
+    });
+    assert.deepEqual(raw.retry, { attempts: 4, delayMinutes: 15 });
+});

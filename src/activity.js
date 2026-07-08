@@ -18,10 +18,20 @@ function safeErrorMessage(error) {
     return message;
 }
 
+function retentionDays(value = process.env.WA_ACTIVITY_RETENTION_DAYS) {
+    const days = value === undefined || value === '' ? 30 : Number(value);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+        throw new Error('WA_ACTIVITY_RETENTION_DAYS must be an integer between 1 and 3650');
+    }
+    return days;
+}
+
 class ActivityLog {
-    constructor(activityPath = process.env.WA_ACTIVITY_FILE || 'data/activity.jsonl') {
+    constructor(activityPath = process.env.WA_ACTIVITY_FILE || 'data/activity.jsonl', options = {}) {
         this.activityPath = path.resolve(activityPath);
+        this.retentionDays = retentionDays(options.retentionDays);
         this.events = new EventEmitter();
+        this.prune();
     }
 
     write(level, type, fields = {}) {
@@ -72,6 +82,24 @@ class ActivityLog {
         return events.slice(-normalizedLimit).reverse();
     }
 
+    prune(now = new Date()) {
+        if (!fs.existsSync(this.activityPath)) return 0;
+        const events = this.readAll();
+        const cutoff = now.getTime() - this.retentionDays * 24 * 60 * 60 * 1000;
+        const kept = events.filter((event) => {
+            const timestamp = new Date(event.timestamp).getTime();
+            return Number.isFinite(timestamp) && timestamp >= cutoff;
+        });
+        const removed = events.length - kept.length;
+        if (removed > 0) {
+            fs.mkdirSync(path.dirname(this.activityPath), { recursive: true });
+            const temporaryPath = `${this.activityPath}.tmp`;
+            fs.writeFileSync(temporaryPath, kept.map((event) => JSON.stringify(event)).join('\n') + (kept.length ? '\n' : ''));
+            fs.renameSync(temporaryPath, this.activityPath);
+        }
+        return removed;
+    }
+
     clear() {
         fs.mkdirSync(path.dirname(this.activityPath), { recursive: true });
         fs.writeFileSync(this.activityPath, '');
@@ -118,4 +146,4 @@ class ActivityLog {
     }
 }
 
-module.exports = { ActivityLog, safeErrorMessage };
+module.exports = { ActivityLog, retentionDays, safeErrorMessage };

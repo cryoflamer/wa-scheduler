@@ -120,3 +120,9 @@ textarea { resize: vertical; }
 .notification-save-status.saved { color: #69dfa7; }
 .notification-save-status.failed { color: #ff9098; }
 .notification-actions { min-height: 18px; }
+.retry-settings { margin: 4px 0 12px; padding: 10px 11px; border: 1px solid #282e38; border-radius: 7px; background: #13171d; }
+.retry-settings .enabled-field { margin-bottom: 0; }
+.retry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.retry-grid label { margin-bottom: 0; position: relative; }
+.input-suffix { color: #7f8997; font-size: 11px; margin-top: -2px; }
+@media (max-width: 620px) { .retry-grid { grid-template-columns: 1fr; } }

@@ -33,6 +33,10 @@ The repository tracks `schedule.example.json`. On the first start, wa-scheduler 
       "id": "monday-report",
       "schedule": "0 8 * * 1",
       "recipient": "${WA_RECIPIENT_SELF}",
+      "retry": {
+        "attempts": 5,
+        "delayMinutes": 10
+      },
       "message": "Доброго ранку. Надсилаю документи за понеділок.",
       "files": [
         "documents/report.pdf",
@@ -150,3 +154,30 @@ Notification settings are saved automatically. Checkbox and recipient changes ar
 For an independent phone push channel, enable the `ntfy` provider in the dashboard. The server defaults to `https://ntfy.sh`; the topic is stored locally as `WA_NTFY_TOPIC` in `.env` and is only exposed to the UI in masked form. Install an ntfy client on the phone and subscribe to the exact same topic before testing. The ntfy card can explicitly send the real server and topic to a selected WhatsApp recipient so the topic can be copied on the phone without revealing it in the normal dashboard or Activity log. **Send test** automatically enables the selected provider, flushes any pending autosave, and publishes a test message. A successful ntfy test confirms that the ntfy server accepted the publication; each test has a unique test id and the dashboard reports the ntfy message id returned by the server. Phone delivery still requires an active subscription to that exact topic.
 
 The ntfy provider can report WhatsApp disconnections, which is useful because a disconnected WhatsApp session cannot reliably report its own failure through WhatsApp. Job notification messages never include file captions, full phone numbers, or ntfy topics. Job message bodies remain omitted unless **Include message body** is enabled for that notification provider.
+
+## Automatic retries
+
+Each job can optionally retry a failed scheduled run. Retry is disabled by default for existing jobs. The dashboard job editor exposes **Retry on failure**, retry attempts, and delay in minutes. The equivalent local schedule configuration is:
+
+```json
+{
+  "retry": {
+    "attempts": 5,
+    "delayMinutes": 10
+  }
+}
+```
+
+`attempts` is the maximum number of automatic retries after the original scheduled attempt. Retry progress is persisted in `data/state.json`, including the next retry time. If wa-scheduler or the user service restarts while a retry is pending, the pending retry is restored from state. Disabled jobs keep their pending retry state paused and resume it when enabled again.
+
+Retries use the existing item-level send state, so already sent messages and files are skipped. The first failure publishes a retry-scheduled operator notification. Intermediate retries remain quiet for providers that already received that notice because notification delivery is idempotent per provider. A successful retry publishes a recovered notification; exhausting all configured retries publishes an urgent exhausted notification.
+
+## Activity retention
+
+`data/activity.jsonl` is pruned when wa-scheduler starts. Events older than 30 days are removed by default with an atomic rewrite. Override the retention window with:
+
+```dotenv
+WA_ACTIVITY_RETENTION_DAYS=30
+```
+
+The value must be an integer from 1 to 3650 days. The dashboard Activity toolbar shows the active retention window.

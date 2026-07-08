@@ -90,6 +90,30 @@ function buildNotification(type, context = {}, options = {}) {
             message: `❌ ${job.id} failed\n\n${details}\n\nError:\n${safeErrorMessage(context.error)}`
         };
     }
+    if (type === 'job.retry.scheduled') {
+        return {
+            title: 'wa-scheduler retry scheduled',
+            priority: 'high',
+            tags: ['warning'],
+            message: `⚠️ ${job.id} failed\n\n${details}\n\nRetry ${context.retryAttempt} of ${context.maxRetries} scheduled in ${context.delayMinutes} minutes.${context.error ? `\n\nError:\n${safeErrorMessage(context.error)}` : ''}`
+        };
+    }
+    if (type === 'job.recovered') {
+        return {
+            title: 'wa-scheduler recovered',
+            priority: 'default',
+            tags: ['white_check_mark'],
+            message: `✅ ${job.id} recovered\n\n${details}\n\nCompleted on retry ${context.retryAttempt} of ${context.maxRetries}.`
+        };
+    }
+    if (type === 'job.retry.exhausted') {
+        return {
+            title: 'wa-scheduler retries exhausted',
+            priority: 'urgent',
+            tags: ['x'],
+            message: `❌ ${job.id} failed\n\n${details}\n\nAutomatic retries exhausted: ${context.retryAttempt} of ${context.maxRetries}.${context.error ? `\n\nError:\n${safeErrorMessage(context.error)}` : ''}`
+        };
+    }
     if (type === 'job.manual.completed') {
         return {
             title: 'wa-scheduler',

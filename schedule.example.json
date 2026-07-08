@@ -1,7 +1,7 @@
 {
   "timezone": "Europe/Kyiv",
   "notifications": {
-    "version": 2,
+    "version": 3,
     "whatsapp": {
       "enabled": false,
       "recipient": "${WA_RECIPIENT_SELF}",
@@ -9,6 +9,9 @@
         "job.completed",
         "job.failed",
         "job.partial",
+        "job.retry.scheduled",
+        "job.recovered",
+        "job.retry.exhausted",
         "job.manual.completed",
         "job.manual.failed",
         "job.manual.partial"
@@ -22,6 +25,9 @@
         "job.completed",
         "job.failed",
         "job.partial",
+        "job.retry.scheduled",
+        "job.recovered",
+        "job.retry.exhausted",
         "job.manual.completed",
         "job.manual.failed",
         "job.manual.partial",
@@ -40,7 +46,11 @@
           "path": "documents/test-document.txt",
           "caption": "тест"
         }
-      ]
+      ],
+      "retry": {
+        "attempts": 5,
+        "delayMinutes": 10
+      }
     }
   ]
 }

@@ -37,6 +37,7 @@
         <section class="toolbar activity-title">
             <h2>Activity</h2>
             <div class="activity-tools">
+                <span id="activity-retention" class="muted"></span>
                 <select id="activity-filter" aria-label="Activity filter">
                     <option value="all">All</option>
                     <option value="jobs">Jobs</option>
@@ -73,6 +74,14 @@
                 <label id="monthday-wrap">Day<input id="monthday" type="number" min="1" max="31" value="1"></label>
                 <label id="time-wrap">Time<input id="schedule-time" type="time" value="08:00"></label>
                 <label id="cron-wrap">Cron<input id="cron" placeholder="0 8 * * 1"></label>
+            </div>
+
+            <div class="retry-settings">
+                <label class="enabled-field"><span>Retry on failure</span><input id="job-retry-enabled" type="checkbox"></label>
+                <div id="job-retry-fields" class="retry-grid" hidden>
+                    <label>Retry attempts<input id="job-retry-attempts" type="number" min="1" max="20" value="5"></label>
+                    <label>Delay<input id="job-retry-delay" type="number" min="1" max="1440" value="10"><span class="input-suffix">minutes</span></label>
+                </div>
             </div>
 
             <label>Message<textarea id="job-message" rows="4" placeholder="Optional text message"></textarea></label>

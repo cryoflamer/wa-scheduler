@@ -7,6 +7,9 @@ const DEFAULT_WHATSAPP_NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.retry.scheduled',
+    'job.recovered',
+    'job.retry.exhausted',
     'job.manual.completed',
     'job.manual.failed',
     'job.manual.partial'
@@ -15,6 +18,9 @@ const DEFAULT_NTFY_NOTIFICATION_EVENTS = [
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.retry.scheduled',
+    'job.recovered',
+    'job.retry.exhausted',
     'job.manual.completed',
     'job.manual.failed',
     'job.manual.partial',
@@ -24,6 +30,9 @@ const ALLOWED_NOTIFICATION_EVENTS = new Set([
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.retry.scheduled',
+    'job.recovered',
+    'job.retry.exhausted',
     'job.manual.completed',
     'job.manual.failed',
     'job.manual.partial',
@@ -37,12 +46,28 @@ const MANUAL_EVENT_BY_SCHEDULED_EVENT = {
 };
 
 function upgradeLegacyNotificationEvents(events, version) {
-    if (Number(version || 1) >= 2) return [...events];
+    const configVersion = Number(version || 1);
     const upgraded = [...events];
-    for (const event of events) {
-        const manualEvent = MANUAL_EVENT_BY_SCHEDULED_EVENT[event];
-        if (manualEvent && !upgraded.includes(manualEvent)) upgraded.push(manualEvent);
+
+    if (configVersion < 2) {
+        for (const event of events) {
+            const manualEvent = MANUAL_EVENT_BY_SCHEDULED_EVENT[event];
+            if (manualEvent && !upgraded.includes(manualEvent)) upgraded.push(manualEvent);
+        }
     }
+
+    if (configVersion < 3) {
+        if ((events.includes('job.failed') || events.includes('job.partial')) && !upgraded.includes('job.retry.scheduled')) {
+            upgraded.push('job.retry.scheduled');
+        }
+        if (events.includes('job.completed') && !upgraded.includes('job.recovered')) {
+            upgraded.push('job.recovered');
+        }
+        if ((events.includes('job.failed') || events.includes('job.partial')) && !upgraded.includes('job.retry.exhausted')) {
+            upgraded.push('job.retry.exhausted');
+        }
+    }
+
     return upgraded;
 }
 
@@ -207,6 +232,24 @@ function normalizeFiles(job, index, environment) {
     return files;
 }
 
+
+function normalizeRetry(value, fieldName) {
+    if (value === undefined) return { attempts: 0, delayMinutes: 10 };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`${fieldName} must be an object`);
+    }
+
+    const attempts = value.attempts === undefined ? 0 : Number(value.attempts);
+    const delayMinutes = value.delayMinutes === undefined ? 10 : Number(value.delayMinutes);
+    if (!Number.isInteger(attempts) || attempts < 0 || attempts > 20) {
+        throw new Error(`${fieldName}.attempts must be an integer between 0 and 20`);
+    }
+    if (!Number.isInteger(delayMinutes) || delayMinutes < 1 || delayMinutes > 1440) {
+        throw new Error(`${fieldName}.delayMinutes must be an integer between 1 and 1440`);
+    }
+    return { attempts, delayMinutes };
+}
+
 function validateJob(job, index, environment) {
     if (!job || typeof job !== 'object' || Array.isArray(job)) {
         throw new Error(`jobs[${index}] must be an object`);
@@ -224,6 +267,7 @@ function validateJob(job, index, environment) {
         schedule: requireExpandedString(job.schedule, `jobs[${index}].schedule`, environment),
         recipient: requireExpandedString(job.recipient, `jobs[${index}].recipient`, environment),
         enabled: job.enabled === undefined ? true : requireBoolean(job.enabled, `jobs[${index}].enabled`),
+        retry: normalizeRetry(job.retry, `jobs[${index}].retry`),
         message,
         files
     };
