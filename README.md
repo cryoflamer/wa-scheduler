@@ -1,29 +1,31 @@
 # wa-scheduler
 
-Scheduled WhatsApp message and document sender built on `whatsapp-web.js`.
+Планувальник повідомлень і документів у WhatsApp на основі `whatsapp-web.js`.
 
-## Setup
+## Встановлення
 
-Use Node.js 22 or newer and install dependencies:
+Потрібен Node.js 22 або новіший. Встановіть залежності:
 
 ```bash
 nvm use
 npm ci
 ```
 
-Create the local environment file:
+Створіть локальний файл змінних середовища:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set the real WhatsApp recipient numbers. `.env` is ignored by Git, so personal phone numbers stay local.
+Відредагуйте `.env` і вкажіть справжні номери одержувачів WhatsApp. Файл `.env` не відстежується Git, тому особисті номери телефонів залишаються лише на цьому комп'ютері.
 
-Place documents under `documents/`. Document contents, scheduler state, WhatsApp authentication data, `.env`, and the local `schedule.json` are ignored by Git.
+Документи зберігайте в каталозі `documents/`. Вміст документів, стан планувальника, дані автентифікації WhatsApp, `.env` і локальний `schedule.json` не відстежуються Git.
 
-## Schedule configuration
+## Налаштування розкладу
 
-The repository tracks `schedule.example.json`. It intentionally starts with `jobs: []`, so a fresh clone does not require any recipient environment variables before the dashboard can open. On the first start, wa-scheduler copies the example to the ignored local `schedule.json`, and the UI edits only that local schedule. A configured job still has the following shape:
+У репозиторії зберігається `schedule.example.json`. Він навмисно починається з `jobs: []`, тому після чистого клонування не потрібно заздалегідь задавати змінні середовища одержувачів, щоб відкрити вебінтерфейс. Під час першого запуску wa-scheduler копіює приклад у локальний `schedule.json`, який не відстежується Git. Надалі вебінтерфейс змінює лише цей локальний розклад.
+
+Приклад налаштованого завдання:
 
 ```json
 {
@@ -50,19 +52,19 @@ The repository tracks `schedule.example.json`. It intentionally starts with `job
 }
 ```
 
-The matching local `.env` contains the private value:
+Відповідне приватне значення зберігається в локальному `.env`:
 
 ```dotenv
 WA_RECIPIENT_SELF=380XXXXXXXXX
 ```
 
-`${VARIABLE}` placeholders can be used in string values in the schedule, including messages, file paths, and file captions. Startup fails with a clear error when a referenced environment variable is missing.
+Підстановки `${VARIABLE}` можна використовувати в рядкових значеннях розкладу, зокрема в повідомленнях, шляхах до файлів і підписах до файлів. Якщо потрібної змінної середовища немає, програма завершує запуск із зрозумілим повідомленням про помилку.
 
-Deleting the local `schedule.json` resets the operational schedule on the next start by recreating it from `schedule.example.json`. An empty `jobs` array is valid, so a fresh local schedule can be configured entirely from the dashboard. Set `WA_SCHEDULE_CONFIG` or `WA_SCHEDULE_EXAMPLE` to override either path.
+Видалення локального `schedule.json` скидає робочий розклад: під час наступного запуску файл буде знову створений із `schedule.example.json`. Порожній масив `jobs` є коректним, тому новий розклад можна повністю налаштувати через вебінтерфейс. Шляхи до цих файлів можна змінити через `WA_SCHEDULE_CONFIG` і `WA_SCHEDULE_EXAMPLE`.
 
-Each job id must be unique. `schedule` uses cron syntax and is evaluated in the configured timezone. A job can contain a `message`, a `files` array, or both. Files can be written as a path string or as an object with `path` and an optional `caption`.
+Ідентифікатор кожного завдання має бути унікальним. Поле `schedule` використовує синтаксис cron і обчислюється у вказаному часовому поясі. Завдання може містити `message`, масив `files` або обидва поля. Файл можна задати рядком зі шляхом або об'єктом із `path` та необов'язковим `caption`.
 
-The original single-document form remains supported:
+Стара форма з одним документом також підтримується:
 
 ```json
 {
@@ -74,104 +76,128 @@ The original single-document form remains supported:
 }
 ```
 
-`file` and `caption` are normalized to a one-item `files` array. Do not define both `file` and `files` in the same job.
+Поля `file` і `caption` автоматично перетворюються на масив `files` з одним елементом. Не задавайте `file` і `files` одночасно в одному завданні.
 
-## Run
+## Запуск
 
 ```bash
 npm start
 ```
 
-On first start, scan the QR code from WhatsApp under **Linked devices**. The client registers configured jobs after WhatsApp becomes ready. A fresh example schedule contains no jobs, so recipients and the first job can be created entirely from the dashboard before any scheduled delivery exists.
+Під час першого запуску відскануйте QR-код у WhatsApp у розділі **Linked devices**. Після готовності WhatsApp програма реєструє налаштовані завдання. У початковому розкладі завдань немає, тому одержувачів і перше завдання можна створити повністю через вебінтерфейс ще до появи будь-якої запланованої відправки.
 
-Scheduler progress is recorded in `data/state.json` under a key composed from the job id and the exact scheduled occurrence in the configured timezone, for example `monday-report:2026-07-13T08:00`. Two cron occurrences on the same calendar day therefore have independent state and can both run. Message and file sends are persisted separately. If a multi-item job fails partway through, a later retry skips already recorded items and resumes with the first unsent item. The job is marked complete only after every configured item has been sent.
+Хід виконання зберігається в `data/state.json`. Ключ складається з ідентифікатора завдання та точної запланованої миті в налаштованому часовому поясі, наприклад `monday-report:2026-07-13T08:00`. Тому дві події cron в один календарний день мають незалежний стан і можуть виконатися обидві.
 
-The first scheduled attempt also stores an immutable snapshot and SHA-256 fingerprint of the resolved recipient, message, files, captions, and retry policy. Pending retries continue from that original snapshot even when the job is edited in the dashboard before the retry fires. A new scheduled occurrence is not started while an earlier occurrence of the same job is still running or waiting for retry, and manual **Send now** is rejected while the same job is already active.
+Відправлення повідомлення та кожного файла фіксуються окремо. Якщо завдання з кількома елементами перерветься посеред виконання, наступна повторна спроба пропустить уже надіслані елементи та продовжить із першого ненадісланого. Завдання вважається завершеним лише після успішної відправки всіх налаштованих елементів.
 
-State written by the earlier daily-key scheduler remains compatible: the legacy `job-id:YYYY-MM-DD` record is migrated to the first exact occurrence encountered for that date. A record already marked with `status: "sent"` remains completed and is not resent during that migration.
+Під час першої запланованої спроби також зберігається незмінний знімок одержувача, повідомлення, файлів, підписів і правил повторних спроб разом із відбитком SHA-256. Тому очікувана повторна спроба продовжує саме початкове виконання, навіть якщо завдання було відредаговане у вебінтерфейсі. Нова запланована подія того самого завдання не запускається, доки попередня ще виконується або чекає повторної спроби. Кнопка **Send now** також недоступна, поки це завдання вже виконується.
 
-Alternative paths can be selected with `WA_SCHEDULE_CONFIG`, `WA_STATE_FILE`, and `WA_ACTIVITY_FILE`.
+Стан, створений старою версією планувальника з денними ключами, залишається сумісним. Запис `job-id:YYYY-MM-DD` переноситься на першу точну заплановану подію, знайдену для цієї дати. Якщо старий запис уже має `status: "sent"`, він лишається завершеним і повторно не надсилається.
 
-### Missed-run catch-up
+Шляхи до робочих файлів можна змінити через `WA_SCHEDULE_CONFIG`, `WA_STATE_FILE` і `WA_ACTIVITY_FILE`.
 
-When WhatsApp becomes ready after process or service startup, wa-scheduler checks the latest scheduled occurrence of each enabled job within the previous 24 hours. If that occurrence has no state record, it is treated as missed and is sent immediately using its exact occurrence key. Only the latest missed occurrence is caught up, and an occurrence already completed, failed, retrying, or otherwise present in state is not duplicated. An unfinished earlier run blocks catch-up for the same job.
+### Надолуження пропущеного запуску
 
-The catch-up event is written to Activity and can notify the operator through WhatsApp or ntfy as **Missed run started late** before the delayed send begins. Normal completion, retry, and failure handling then applies to that same occurrence. Override the startup look-back window with:
+Після запуску процесу або служби, коли WhatsApp переходить у стан готовності, wa-scheduler перевіряє останню заплановану подію кожного увімкненого завдання за попередні 24 години. Якщо для неї немає запису в стані, вона вважається пропущеною та виконується негайно зі своїм точним ключем події.
+
+Надолужується лише остання пропущена подія. Уже завершене, невдале, повторно заплановане або будь-яке інше виконання, що вже має запис у стані, не дублюється. Незавершене попереднє виконання блокує надолуження для того самого завдання.
+
+Подія надолуження записується в журнал дій і може повідомити оператора через WhatsApp або ntfy як **Missed run started late** ще до початку запізнілої відправки. Далі до цієї ж події застосовуються звичайні правила завершення, повторних спроб і помилок.
+
+Проміжок перевірки можна змінити:
 
 ```dotenv
 WA_MISSED_RUN_CATCHUP_HOURS=24
 ```
 
-Use `0` to disable catch-up. The value must be an integer from 0 to 720 hours. Catch-up is evaluated only during runtime startup after WhatsApp becomes ready; editing settings or jobs in the dashboard does not retroactively trigger missed jobs.
+Значення `0` вимикає надолуження. Допустиме ціле число від 0 до 720 годин. Перевірка виконується лише після запуску програми, коли WhatsApp стає готовим. Зміна налаштувань або завдань у вебінтерфейсі не запускає пропущені завдання заднім числом.
 
-## Test
+## Перевірка
 
 ```bash
 npm test
 ```
 
-## Local web UI
+## Локальний вебінтерфейс
 
-Starting the scheduler also starts a compact local dashboard on:
+Разом із планувальником запускається компактний локальний вебінтерфейс:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-The UI shows WhatsApp connection status and scheduled jobs. Jobs can be created, edited, deleted, or sent immediately. The schedule editor provides daily, weekly, and monthly forms with an advanced cron fallback.
+У ньому видно стан з'єднання WhatsApp і заплановані завдання. Завдання можна створювати, редагувати, видаляти та надсилати негайно. Редактор розкладу має прості режими для щоденного, щотижневого й щомісячного запуску, а також розширений режим cron.
 
-Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the local schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked. A recipient cannot be deleted while any job or the WhatsApp notification configuration still references that alias, preventing a configuration that works until the next restart and then fails on a missing environment variable.
+Одержувачі керуються через зрозумілі псевдоніми. Справжні номери WhatsApp залишаються в локальному `.env`, а розклад містить підстановки на кшталт `${WA_RECIPIENT_OFFICE}`. Вебінтерфейс показує номери лише в замаскованому вигляді. Одержувача не можна видалити, якщо на його псевдонім посилається хоча б одне завдання або налаштування повідомлень WhatsApp. Це не дає створити конфігурацію, яка працює до першого перезапуску, а потім падає через відсутню змінну середовища.
 
-Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
+Файли, вибрані в редакторі завдання, копіюються до `documents/`, а в розкладі зберігаються відносні шляхи в межах репозиторію. Окремі підписи до файлів підтримуються.
 
-`Send now` executes the same job pipeline as scheduled delivery but uses a unique manual-run state key, so it performs a new send without changing scheduled occurrence state. The dashboard refuses a manual send while the same job already has an active scheduled or manual execution, preventing accidental concurrent duplicate delivery.
+**Send now** використовує той самий механізм відправлення, що й запуск за розкладом, але отримує окремий унікальний ключ ручного виконання. Тому негайна відправка не змінює стан запланованої події. Вебінтерфейс не дозволяє ручний запуск, якщо те саме завдання вже виконується вручну або за розкладом, що захищає від випадкових подвійних відправок.
 
-The dashboard also contains a persistent Activity panel. Structured runtime events are appended to `data/activity.jsonl` and streamed live to the browser with Server-Sent Events. The latest 100 events are shown by default and can be filtered by jobs, WhatsApp, or errors, or cleared from the UI. Activity events record job ids and document basenames but do not include recipient phone numbers, message bodies, captions, or absolute local paths.
+У вебінтерфейсі також є постійна панель **Activity**. Структуровані події додаються до `data/activity.jsonl` і передаються до браузера наживо через Server-Sent Events. Типово показуються останні 100 подій. Їх можна відфільтрувати за завданнями, WhatsApp або помилками чи очистити з вебінтерфейсу.
 
-The UI binds to `127.0.0.1` by default. `WA_UI_HOST` and `WA_UI_PORT` can override the bind address and port when needed.
+Журнал містить ідентифікатори завдань і назви документів без шляхів, але не містить номерів одержувачів, текстів повідомлень, підписів до файлів або абсолютних локальних шляхів.
 
-## Operational status and job controls
+Типово вебінтерфейс слухає лише `127.0.0.1`. Адресу й порт можна змінити через `WA_UI_HOST` і `WA_UI_PORT`.
 
-Jobs are enabled by default. Set `"enabled": false` in the local `schedule.json`, or use the dashboard **Enable / Disable** button, to pause a job without deleting it. Disabled jobs are kept in the configuration but are not registered with the scheduler.
+## Стан роботи та керування завданнями
 
-Each job card shows its next scheduled run and the latest scheduled run status. A failed run that already sent some items is shown as partial, including the number of completed items. Manual **Send now** executions remain separate from scheduled-run history.
+Нові завдання типово увімкнені. Щоб призупинити завдання без видалення, задайте `"enabled": false` у локальному `schedule.json` або скористайтеся кнопкою **Enable / Disable**. Вимкнене завдання зберігається в налаштуваннях, але не реєструється в планувальнику.
 
-The dashboard header shows the number of active jobs and the time when the current wa-scheduler process started.
+На картці кожного завдання видно наступний запланований запуск і стан останнього запланованого виконання. Якщо невдале виконання вже встигло надіслати частину елементів, воно показується як часткове разом із кількістю завершених елементів. Ручні запуски **Send now** не змішуються з історією виконань за розкладом.
 
-## User service
+У заголовку вебінтерфейсу видно кількість активних завдань і час запуску поточного процесу wa-scheduler.
 
-On Linux systems with a working systemd user manager, wa-scheduler can run without an open terminal and restart after a process failure:
+## Служба користувача
+
+У Linux із робочим користувацьким systemd wa-scheduler може працювати без відкритого термінала й автоматично перезапускатися після збою процесу:
 
 ```bash
 npm run service:install
 npm run service:status
 ```
 
-The installer generates `~/.config/systemd/user/wa-scheduler.service` from the current project path and the active Node.js executable, then enables and starts it. No home directory or NVM version is hardcoded in the repository.
+Встановлювач створює `~/.config/systemd/user/wa-scheduler.service` на основі поточного шляху до проєкту та активного виконуваного файла Node.js, після чого вмикає й запускає службу. Домашній каталог і версія NVM не прописані в репозиторії наперед.
 
-To stop and remove the generated user service:
+Щоб зупинити й видалити створену службу:
 
 ```bash
 npm run service:remove
 ```
 
-The service starts wa-scheduler when the systemd user manager starts. On a normal Ubuntu system, this is the intended unattended runtime mode.
+Служба запускає wa-scheduler разом із користувацьким systemd. На звичайній Ubuntu це рекомендований режим безперервної роботи без відкритого термінала.
 
-## Notifications
+## Сповіщення
 
-The dashboard can notify the operator independently from the job recipient. Notification settings are local runtime configuration stored in the ignored `schedule.json` and `.env`.
+Вебінтерфейс може окремо сповіщати оператора, незалежно від одержувача самого завдання. Налаштування сповіщень зберігаються локально в `schedule.json` і `.env`, які не відстежуються Git.
 
-WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, partial-send, missed-run catch-up, retry, and recovery events can be enabled separately for scheduled and manual **Send now** runs. Manual completion notifications explicitly say that the job was sent manually. Operator notifications identify the job recipient by alias when possible, list sent and pending items by filename, and include failure details. Each provider has an **Include message body** checkbox; it is off by default so the original job text is not copied into operator notifications unless explicitly enabled. Notification delivery uses a persistent per-run provider outbox. A successful provider is never repeated, while a failed provider remains pending in `data/state.json` and is retried in the background with bounded backoff after WhatsApp is ready, including after a process or service restart.
+Сповіщення WhatsApp можна надсилати на будь-який налаштований псевдонім одержувача, зазвичай `SELF`. Окремо вмикаються повідомлення про завершення, помилку, часткову відправку, запізнілий запуск, повторну спробу та відновлення після повторної спроби для запусків за розкладом і ручних **Send now**.
 
-Notification settings are saved automatically. Checkbox and recipient changes are persisted immediately; ntfy server and topic fields are saved after a short typing pause. The dashboard shows `Saving…`, `Saved ✓`, or `Save failed`, retries one failed autosave, and warns before closing the page while unsaved notification changes remain. There is no separate notification save button.
+Повідомлення про ручне завершення прямо вказує, що завдання було надіслане вручну. Сповіщення оператора показують одержувача завдання за псевдонімом, коли це можливо, перелік надісланих і ненадісланих елементів за назвами файлів та подробиці помилки.
 
-For an independent phone push channel, enable the `ntfy` provider in the dashboard. The server defaults to `https://ntfy.sh`; the topic is stored locally as `WA_NTFY_TOPIC` in `.env` and is only exposed to the UI in masked form. Install an ntfy client on the phone and subscribe to the exact same topic before testing. The ntfy card can explicitly send the real server and topic to a selected WhatsApp recipient so the topic can be copied on the phone without revealing it in the normal dashboard or Activity log. **Send test** automatically enables the selected provider, flushes any pending autosave, and publishes a test message. A successful ntfy test confirms that the ntfy server accepted the publication; each test has a unique test id and the dashboard reports the ntfy message id returned by the server. Phone delivery still requires an active subscription to that exact topic.
+Для кожного каналу є прапорець **Include message body**. Типово він вимкнений, тому початковий текст завдання не дублюється у сповіщенні оператора. Його можна додати явно.
 
-The ntfy provider can report WhatsApp disconnections, which is useful because a disconnected WhatsApp session cannot reliably report its own failure through WhatsApp. A real WhatsApp disconnect is treated as a recoverable process failure: wa-scheduler persists the disconnect notification intent, gives enabled providers a brief delivery chance, then exits non-zero so the systemd user service can restart the process and reuse the LocalAuth session. Pending notification intents survive that restart and resume from the outbox after WhatsApp becomes ready. Job notification messages never include file captions, full phone numbers, or ntfy topics. Job message bodies remain omitted unless **Include message body** is enabled for that notification provider.
+Доставка сповіщень використовує постійну чергу в `data/state.json`, окрему для кожного запуску та каналу. Після успішної доставки той самий канал повторно не викликається. Невдала доставка лишається в черзі й повторюється у фоні з обмеженим збільшенням затримки після готовності WhatsApp. Черга переживає перезапуск процесу або служби.
 
-## Automatic retries
+Налаштування сповіщень зберігаються автоматично. Прапорці та вибір одержувача записуються одразу; поля сервера й теми ntfy — після короткої паузи введення. Вебінтерфейс показує `Saving…`, `Saved ✓` або `Save failed`, один раз повторює невдале автоматичне збереження та попереджає перед закриттям сторінки, якщо зміни ще не записані. Окремої кнопки збереження сповіщень немає.
 
-Each job can optionally retry a failed scheduled run. Retry is disabled by default for existing jobs. The dashboard job editor exposes **Retry on failure**, retry attempts, and delay in minutes. The equivalent local schedule configuration is:
+Для незалежних сповіщень на телефон можна ввімкнути ntfy. Типовий сервер — `https://ntfy.sh`. Тема зберігається локально як `WA_NTFY_TOPIC` у `.env` і у звичайному вебінтерфейсі показується лише замасковано.
+
+Встановіть застосунок ntfy на телефоні та підпишіться на точно таку саму тему перед перевіркою. Картка ntfy може явно надіслати справжній сервер і тему вибраному одержувачу WhatsApp, щоб скопіювати тему вже на телефоні, не показуючи її відкрито у звичайному вебінтерфейсі чи журналі дій.
+
+Кнопка **Send test** автоматично вмикає вибраний канал, спочатку зберігає всі очікувані зміни, а потім надсилає перевірочне повідомлення. Успішна перевірка ntfy означає, що сервер ntfy прийняв публікацію. Кожна перевірка має унікальний ідентифікатор, а вебінтерфейс показує ідентифікатор повідомлення, який повернув сервер. Для доставки на телефон все одно потрібна активна підписка на точну тему.
+
+Ntfy може повідомляти про розрив з'єднання WhatsApp. Це корисно, бо від'єднаний WhatsApp не може надійно повідомити про власну несправність через WhatsApp.
+
+Справжній розрив з'єднання WhatsApp вважається відновлюваним збоєм процесу. wa-scheduler спочатку зберігає намір надіслати сповіщення про розрив, дає ввімкненим каналам короткий час на негайну доставку, а потім завершується з ненульовим кодом. Користувацька служба systemd перезапускає процес, і LocalAuth повторно використовує наявний сеанс WhatsApp. Невідправлені сповіщення переживають цей перезапуск і продовжують доставлятися з черги після готовності WhatsApp.
+
+Сповіщення про завдання ніколи не містять підписів до файлів, повних номерів телефонів або тем ntfy. Текст самого завдання не додається, доки для відповідного каналу явно не ввімкнено **Include message body**.
+
+## Автоматичні повторні спроби
+
+Для кожного завдання можна ввімкнути повторні спроби після невдалого запуску за розкладом. Для наявних завдань вони типово вимкнені. У редакторі завдання є **Retry on failure**, кількість повторних спроб і затримка в хвилинах.
+
+Відповідне налаштування в локальному розкладі:
 
 ```json
 {
@@ -182,26 +208,34 @@ Each job can optionally retry a failed scheduled run. Retry is disabled by defau
 }
 ```
 
-`attempts` is the maximum number of automatic retries after the original scheduled attempt. Retry progress is persisted in `data/state.json`, including the next retry time. If wa-scheduler or the user service restarts while a retry is pending, the pending retry is restored from state. Disabled jobs keep their pending retry state paused and resume it when enabled again.
+`attempts` — найбільша кількість автоматичних повторів після початкової запланованої спроби. Стан повторів, зокрема час наступної спроби, зберігається в `data/state.json`. Якщо wa-scheduler або користувацька служба перезапуститься під час очікування, запланована повторна спроба буде відновлена зі стану. Для вимкненого завдання очікувана спроба призупиняється й відновлюється після повторного ввімкнення.
 
-Retries use the immutable scheduled-run snapshot and the existing item-level send state, so edits made after a failure do not change the recipient, message, files, captions, or retry policy of an in-flight run, and already sent items are skipped. The first failure publishes a retry-scheduled operator notification. Intermediate retries remain quiet for providers that already received that notice because notification delivery is idempotent per provider. A successful retry publishes a recovered notification; exhausting all configured retries publishes an urgent exhausted notification.
+Повтори використовують незмінний знімок початкового запуску та вже наявний стан окремих елементів. Тому зміни завдання після помилки не змінюють одержувача, повідомлення, файли, підписи або правила повторів поточного виконання, а вже надіслані елементи пропускаються.
 
-## State retention
+Після першої помилки оператор отримує повідомлення про заплановану повторну спробу. Проміжні повтори не дублюють це повідомлення в каналах, які вже його отримали. Успішний повтор надсилає повідомлення про відновлення, а вичерпання всіх налаштованих спроб — термінове повідомлення про остаточну невдачу.
 
-Completed, failed, and cancelled run records in `data/state.json` are pruned on startup after 90 days by default. Running jobs, pending scheduled retries, and records with pending notification deliveries are never pruned. Deleting a job cancels its pending retry before removing the job; an actively running job cannot be deleted. Disabling a notification provider or event cancels matching pending outbox deliveries so stale alerts cannot reappear if the channel is enabled again much later. Override the retention window with:
+## Зберігання стану
+
+Завершені, невдалі та скасовані записи в `data/state.json` типово видаляються під час запуску після 90 днів. Записи про активні завдання, очікувані повторні спроби й записи з недоставленими сповіщеннями не видаляються.
+
+Видалення завдання спочатку скасовує його очікувану повторну спробу, а вже потім видаляє саме завдання. Активне завдання видалити не можна. Вимкнення каналу або окремого виду сповіщень скасовує відповідні очікувані доставки, тому старі повідомлення не з'являться раптово після повторного ввімкнення каналу через тривалий час.
+
+Період зберігання можна змінити:
 
 ```dotenv
 WA_STATE_RETENTION_DAYS=90
 ```
 
-The value must be an integer from 1 to 3650 days. Notification outbox payloads are removed from state as soon as the corresponding provider delivery succeeds.
+Допустиме ціле число від 1 до 3650 днів. Повний вміст очікуваного сповіщення видаляється зі стану одразу після успішної доставки відповідним каналом.
 
-## Activity retention
+## Зберігання журналу дій
 
-`data/activity.jsonl` is pruned when wa-scheduler starts. Events older than 30 days are removed by default with an atomic rewrite. Override the retention window with:
+Файл `data/activity.jsonl` очищається під час запуску wa-scheduler. Події, старші за 30 днів, типово видаляються з атомарним перезаписом файла.
+
+Період зберігання можна змінити:
 
 ```dotenv
 WA_ACTIVITY_RETENTION_DAYS=30
 ```
 
-The value must be an integer from 1 to 3650 days. The dashboard Activity toolbar shows the active retention window.
+Допустиме ціле число від 1 до 3650 днів. На панелі **Activity** видно поточний період зберігання журналу.
