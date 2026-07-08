@@ -17,6 +17,7 @@ const {
     saveRecipient
 } = require('../recipients');
 const { runJob } = require('../scheduler');
+const { safeErrorMessage } = require('../activity');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 
@@ -123,9 +124,13 @@ function jobFromBody(body) {
     };
 }
 
-function sendJsonError(response, error) {
-    console.error('UI request failed:', error);
-    response.status(400).json({ error: error.message });
+function sendJsonError(response, error, activity = null) {
+    if (activity) {
+        activity.error('ui.request.failed', { error });
+    } else {
+        console.error('UI request failed:', error);
+    }
+    response.status(400).json({ error: safeErrorMessage(error) });
 }
 
 function createWebServer(options) {
@@ -135,13 +140,46 @@ function createWebServer(options) {
         schedulerManager,
         configPath = process.env.WA_SCHEDULE_CONFIG || 'schedule.json',
         envPath = '.env',
-        status
+        status,
+        activity
     } = options;
     const app = express();
     const upload = createUpload();
 
     app.use(express.json({ limit: '1mb' }));
     app.use(express.static(path.resolve('public')));
+
+    app.get('/api/activity', (request, response) => {
+        if (!activity) return response.json([]);
+        return response.json(activity.list({
+            limit: request.query.limit,
+            filter: request.query.filter
+        }));
+    });
+
+    app.delete('/api/activity', (_request, response) => {
+        activity?.clear();
+        response.json({ ok: true });
+    });
+
+    app.get('/api/activity/stream', (request, response) => {
+        response.setHeader('Content-Type', 'text/event-stream');
+        response.setHeader('Cache-Control', 'no-cache');
+        response.setHeader('Connection', 'keep-alive');
+        response.flushHeaders?.();
+
+        const send = (event) => response.write(`data: ${JSON.stringify(event)}\n\n`);
+        const sendClear = () => response.write('event: clear\ndata: {}\n\n');
+        const unsubscribe = activity?.subscribe(send) || (() => {});
+        const unsubscribeClear = activity?.onClear(sendClear) || (() => {});
+        const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 25000);
+
+        request.on('close', () => {
+            clearInterval(keepAlive);
+            unsubscribe();
+            unsubscribeClear();
+        });
+    });
 
     app.get('/api/status', (_request, response) => {
         response.json({
@@ -165,7 +203,7 @@ function createWebServer(options) {
             schedulerManager.apply(normalized);
             response.status(201).json({ ok: true });
         } catch (error) {
-            sendJsonError(response, error);
+            sendJsonError(response, error, activity);
         }
     });
 
@@ -183,7 +221,7 @@ function createWebServer(options) {
             schedulerManager.apply(normalized);
             return response.json({ ok: true });
         } catch (error) {
-            return sendJsonError(response, error);
+            return sendJsonError(response, error, activity);
         }
     });
 
@@ -199,7 +237,7 @@ function createWebServer(options) {
             schedulerManager.apply(normalized);
             response.json({ ok: true });
         } catch (error) {
-            sendJsonError(response, error);
+            sendJsonError(response, error, activity);
         }
     });
 
@@ -216,10 +254,10 @@ function createWebServer(options) {
             }
 
             const key = `manual:${job.id}:${crypto.randomUUID()}`;
-            await runJob(client, job, stateStore, key);
+            await runJob(client, job, stateStore, key, {}, activity);
             return response.json({ ok: true });
         } catch (error) {
-            return sendJsonError(response, error);
+            return sendJsonError(response, error, activity);
         }
     });
 
@@ -241,7 +279,7 @@ function createWebServer(options) {
                 maskedNumber: maskNumber(recipient.number)
             });
         } catch (error) {
-            sendJsonError(response, error);
+            sendJsonError(response, error, activity);
         }
     });
 
@@ -255,7 +293,7 @@ function createWebServer(options) {
             deleteRecipient(request.params.key, envPath);
             response.json({ ok: true });
         } catch (error) {
-            sendJsonError(response, error);
+            sendJsonError(response, error, activity);
         }
     });
 

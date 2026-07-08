@@ -1,9 +1,10 @@
-const state = { jobs: [], recipients: [], timezone: '', editingFiles: [] };
+const state = { jobs: [], recipients: [], timezone: '', editingFiles: [], activity: [], activityFilter: 'all' };
 const $ = (selector) => document.querySelector(selector);
 const jobsEl = $('#jobs');
 const recipientsEl = $('#recipients');
 const jobDialog = $('#job-dialog');
 const recipientDialog = $('#recipient-dialog');
+const activityEl = $('#activity');
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 async function api(url, options = {}) {
@@ -35,6 +36,44 @@ function scheduleLabel(cron) {
     if (monthDay === '*' && month === '*' && /^\d$/.test(weekDay)) return `Every ${weekdays[Number(weekDay)]} · ${time}`;
     if (/^\d{1,2}$/.test(monthDay) && month === '*' && weekDay === '*') return `Day ${monthDay} of every month · ${time}`;
     return `Cron ${cron}`;
+}
+
+
+function activityMatchesFilter(event) {
+    if (state.activityFilter === 'all') return true;
+    if (state.activityFilter === 'jobs') return event.type.startsWith('job.');
+    if (state.activityFilter === 'whatsapp') return event.type.startsWith('whatsapp.');
+    if (state.activityFilter === 'errors') return event.level === 'error';
+    return true;
+}
+
+function activityTime(timestamp) {
+    return new Intl.DateTimeFormat([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    }).format(new Date(timestamp));
+}
+
+function renderActivity() {
+    const events = state.activity.filter(activityMatchesFilter);
+    activityEl.innerHTML = events.length ? events.map((event) => `
+        <article class="activity-row ${escapeHtml(event.level)}">
+            <time datetime="${escapeHtml(event.timestamp)}">${escapeHtml(activityTime(event.timestamp))}</time>
+            <span class="activity-dot" aria-hidden="true"></span>
+            <div class="activity-copy">
+                <div class="activity-line">
+                    ${event.jobId ? `<strong>${escapeHtml(event.jobId)}</strong>` : `<strong>${escapeHtml(event.type.replace(/\./g, ' '))}</strong>`}
+                </div>
+                <div class="activity-message">${escapeHtml(event.message)}</div>
+            </div>
+        </article>
+    `).join('') : '<div class="empty">No activity yet.</div>';
+}
+
+async function loadActivity() {
+    state.activity = await api(`/api/activity?limit=100&filter=${encodeURIComponent(state.activityFilter)}`);
+    renderActivity();
 }
 
 function renderJobs() {
@@ -78,6 +117,7 @@ async function refresh() {
     $('#wa-status').className = `status ${status.whatsapp}`;
     renderJobs();
     renderRecipients();
+    await loadActivity();
 }
 
 function renderRecipientOptions(selected = '') {
@@ -240,6 +280,36 @@ $('#recipient-form').addEventListener('submit', async (event) => {
 });
 
 refresh().catch((error) => toast(error.message));
+
+
+$('#activity-filter').addEventListener('change', async (event) => {
+    state.activityFilter = event.target.value;
+    try { await loadActivity(); } catch (error) { toast(error.message); }
+});
+
+$('#clear-activity').addEventListener('click', async () => {
+    if (!confirm('Clear activity log?')) return;
+    try {
+        await api('/api/activity', { method: 'DELETE' });
+        state.activity = [];
+        renderActivity();
+        toast('Activity cleared');
+    } catch (error) {
+        toast(error.message);
+    }
+});
+
+const activityStream = new EventSource('/api/activity/stream');
+activityStream.onmessage = (event) => {
+    const activity = JSON.parse(event.data);
+    state.activity = [activity, ...state.activity.filter((item) => item.id !== activity.id)].slice(0, 100);
+    renderActivity();
+};
+activityStream.addEventListener('clear', () => {
+    state.activity = [];
+    renderActivity();
+});
+
 setInterval(() => api('/api/status').then((status) => {
     $('#wa-status').textContent = status.whatsapp;
     $('#wa-status').className = `status ${status.whatsapp}`;

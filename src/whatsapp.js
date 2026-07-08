@@ -11,26 +11,30 @@ function chatIdFor(recipient) {
     return `${normalizeNumber(recipient)}@c.us`;
 }
 
-function createWhatsAppClient() {
+function createWhatsAppClient(activity) {
     const client = new Client({
         authStrategy: new LocalAuth()
     });
 
     client.on('qr', (qr) => {
+        activity?.info('whatsapp.qr', { message: 'WhatsApp QR code requested' });
         console.log('Scan this QR code with WhatsApp:');
         qrcode.generate(qr, { small: true });
     });
 
     client.on('authenticated', () => {
-        console.log('WhatsApp authenticated');
+        if (activity) activity.info('whatsapp.authenticated', { message: 'WhatsApp authenticated' });
+        else console.log('WhatsApp authenticated');
     });
 
     client.on('auth_failure', (message) => {
-        console.error('WhatsApp authentication failed:', message);
+        if (activity) activity.error('whatsapp.auth_failure', { message: `WhatsApp authentication failed: ${message}` });
+        else console.error('WhatsApp authentication failed:', message);
     });
 
     client.on('disconnected', (reason) => {
-        console.log('WhatsApp disconnected:', reason);
+        if (activity) activity.error('whatsapp.disconnected', { message: `WhatsApp disconnected: ${reason}` });
+        else console.log('WhatsApp disconnected:', reason);
     });
 
     return client;

@@ -82,7 +82,7 @@ Scheduler progress is recorded in `data/state.json` under a key composed from th
 
 State written by the earlier single-document scheduler remains compatible: a record already marked with `status: "sent"` is treated as a completed job.
 
-Alternative paths can be selected with `WA_SCHEDULE_CONFIG` and `WA_STATE_FILE`.
+Alternative paths can be selected with `WA_SCHEDULE_CONFIG`, `WA_STATE_FILE`, and `WA_ACTIVITY_FILE`.
 
 ## Test
 
@@ -105,5 +105,7 @@ Recipients are managed by friendly aliases in the UI. Their real WhatsApp number
 Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
 
 `Send now` executes the same job pipeline as scheduled delivery but uses a unique manual-run state key, so it always performs a new send without changing the daily idempotency record of the scheduled run.
+
+The dashboard also contains a persistent Activity panel. Structured runtime events are appended to `data/activity.jsonl` and streamed live to the browser with Server-Sent Events. The latest 100 events are shown by default and can be filtered by jobs, WhatsApp, or errors, or cleared from the UI. Activity events record job ids and document basenames but do not include recipient phone numbers, message bodies, captions, or absolute local paths.
 
 The UI binds to `127.0.0.1` by default. `WA_UI_HOST` and `WA_UI_PORT` can override the bind address and port when needed.

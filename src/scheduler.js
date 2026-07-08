@@ -1,3 +1,4 @@
+const path = require('path');
 const cron = require('node-cron');
 const { sendDocument, sendTextMessage } = require('./whatsapp');
 
@@ -13,19 +14,42 @@ function dateKey(date, timezone) {
     return `${values.year}-${values.month}-${values.day}`;
 }
 
-async function runJob(client, job, stateStore, key, senders = {}) {
+function report(activity, method, type, fields, fallback) {
+    if (activity) {
+        activity[method](type, fields);
+    } else if (method === 'error') {
+        console.error(fallback || fields.message);
+    } else if (method === 'skipped') {
+        console.warn(fallback || fields.message);
+    } else {
+        console.log(fallback || fields.message);
+    }
+}
+
+async function runJob(client, job, stateStore, key, senders = {}, activity = null) {
     const sendText = senders.sendText || sendTextMessage;
     const sendFile = senders.sendFile || sendDocument;
 
     if (stateStore.isComplete(key)) {
-        console.log(`Job ${job.id} already sent for this date; skipping`);
+        report(activity, 'skipped', 'job.skipped', {
+            jobId: job.id,
+            message: 'Already sent for this date; skipping'
+        }, `Job ${job.id} already sent for this date; skipping`);
         return { status: 'skipped' };
     }
+
+    report(activity, 'info', 'job.started', {
+        jobId: job.id,
+        message: 'Job started'
+    }, `Job ${job.id} started`);
 
     if (job.message && !stateStore.isMessageSent(key)) {
         await sendText(client, job.recipient, job.message);
         stateStore.markMessageSent(key, new Date().toISOString());
-        console.log(`Job ${job.id} message sent`);
+        report(activity, 'sent', 'job.message.sent', {
+            jobId: job.id,
+            message: 'Message sent'
+        }, `Job ${job.id} message sent`);
     }
 
     for (const file of job.files) {
@@ -33,18 +57,26 @@ async function runJob(client, job, stateStore, key, senders = {}) {
             continue;
         }
 
-        const filePath = await sendFile(client, job.recipient, file);
+        await sendFile(client, job.recipient, file);
         stateStore.markFileSent(key, file.path, new Date().toISOString());
-        console.log(`Job ${job.id} file sent: ${filePath}`);
+        const filename = path.basename(file.path);
+        report(activity, 'sent', 'job.file.sent', {
+            jobId: job.id,
+            message: `${filename} sent`,
+            details: { file: filename }
+        }, `Job ${job.id} file sent: ${file.path}`);
     }
 
     stateStore.markComplete(key, new Date().toISOString());
-    console.log(`Job ${job.id} completed`);
+    report(activity, 'sent', 'job.completed', {
+        jobId: job.id,
+        message: 'Job completed'
+    }, `Job ${job.id} completed`);
 
     return { status: 'sent' };
 }
 
-function registerJobs(client, config, stateStore) {
+function registerJobs(client, config, stateStore, activity = null) {
     for (const job of config.jobs) {
         if (!cron.validate(job.schedule)) {
             throw new Error(`Invalid cron schedule for job ${job.id}: ${job.schedule}`);
@@ -61,9 +93,12 @@ function registerJobs(client, config, stateStore) {
                 const key = `${job.id}:${dateKey(now, config.timezone)}`;
 
                 try {
-                    await runJob(client, job, stateStore, key);
+                    await runJob(client, job, stateStore, key, {}, activity);
                 } catch (error) {
-                    console.error(`Job ${job.id} failed:`, error);
+                    report(activity, 'error', 'job.failed', {
+                        jobId: job.id,
+                        error
+                    }, `Job ${job.id} failed: ${error.message}`);
                 }
             },
             {
@@ -73,22 +108,26 @@ function registerJobs(client, config, stateStore) {
         );
 
         tasks.push(task);
-        console.log(`Job ${job.id} scheduled: ${job.schedule} (${config.timezone})`);
+        report(activity, 'info', 'job.scheduled', {
+            jobId: job.id,
+            message: `Scheduled: ${job.schedule} (${config.timezone})`
+        }, `Job ${job.id} scheduled: ${job.schedule} (${config.timezone})`);
     }
 
     return tasks;
 }
 
 class SchedulerManager {
-    constructor(client, stateStore) {
+    constructor(client, stateStore, activity = null) {
         this.client = client;
         this.stateStore = stateStore;
+        this.activity = activity;
         this.tasks = [];
         this.config = null;
     }
 
     apply(config) {
-        const nextTasks = registerJobs(this.client, config, this.stateStore);
+        const nextTasks = registerJobs(this.client, config, this.stateStore, this.activity);
         this.stop();
         this.tasks = nextTasks;
         this.config = config;

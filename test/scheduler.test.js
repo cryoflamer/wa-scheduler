@@ -124,3 +124,38 @@ test('legacy completed state skips the entire job', async () => {
         assert.equal(sendCount, 0);
     });
 });
+
+test('job execution emits structured activity without recipient or message contents', async () => {
+    await withState(async (stateStore) => {
+        const events = [];
+        const activity = {
+            info(type, fields) { events.push({ level: 'info', type, ...fields }); },
+            sent(type, fields) { events.push({ level: 'sent', type, ...fields }); },
+            skipped(type, fields) { events.push({ level: 'skipped', type, ...fields }); },
+            error(type, fields) { events.push({ level: 'error', type, ...fields }); }
+        };
+        const job = {
+            id: 'report',
+            recipient: '380661234567',
+            message: 'Private message body',
+            files: [{ path: 'documents/report.pdf', caption: 'Private caption' }]
+        };
+
+        await runJob({}, job, stateStore, 'report:2026-07-13', {
+            sendText: async () => {},
+            sendFile: async () => 'documents/report.pdf'
+        }, activity);
+
+        assert.deepEqual(events.map((event) => event.type), [
+            'job.started',
+            'job.message.sent',
+            'job.file.sent',
+            'job.completed'
+        ]);
+        const serialized = JSON.stringify(events);
+        assert.equal(serialized.includes('380661234567'), false);
+        assert.equal(serialized.includes('Private message body'), false);
+        assert.equal(serialized.includes('Private caption'), false);
+        assert.equal(serialized.includes('report.pdf'), true);
+    });
+});

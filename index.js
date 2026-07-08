@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const { ActivityLog } = require('./src/activity');
 const { loadConfig } = require('./src/config');
 const { SchedulerManager } = require('./src/scheduler');
 const { StateStore } = require('./src/state');
@@ -9,9 +10,10 @@ const { createWebServer } = require('./src/web/server');
 async function main() {
     const configPath = process.env.WA_SCHEDULE_CONFIG || 'schedule.json';
     const config = loadConfig(configPath);
+    const activity = new ActivityLog(process.env.WA_ACTIVITY_FILE);
     const stateStore = new StateStore(process.env.WA_STATE_FILE);
-    const client = createWhatsAppClient();
-    const schedulerManager = new SchedulerManager(client, stateStore);
+    const client = createWhatsAppClient(activity);
+    const schedulerManager = new SchedulerManager(client, stateStore, activity);
     const status = { whatsapp: 'connecting' };
     const host = process.env.WA_UI_HOST || '127.0.0.1';
     const port = Number(process.env.WA_UI_PORT || 3000);
@@ -26,7 +28,7 @@ async function main() {
 
     client.once('ready', () => {
         status.whatsapp = 'ready';
-        console.log('WhatsApp ready');
+        activity.info('whatsapp.ready', { message: 'WhatsApp ready' });
         schedulerManager.apply(config);
     });
 
@@ -35,11 +37,12 @@ async function main() {
         stateStore,
         schedulerManager,
         configPath,
-        status
+        status,
+        activity
     });
 
     app.listen(port, host, () => {
-        console.log(`UI available at http://${host}:${port}`);
+        activity.info('ui.ready', { message: `UI available at http://${host}:${port}` });
     });
 
     await client.initialize();

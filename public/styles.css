@@ -73,3 +73,22 @@ textarea { resize: vertical; }
     .file-row { grid-template-columns: 1fr auto; }
     .file-row input { grid-column: 1 / -1; grid-row: 2; }
 }
+.activity-title { margin-top: 30px; }
+.activity-tools { display: flex; align-items: center; gap: 7px; }
+.activity-tools select { width: auto; min-width: 110px; padding: 6px 28px 6px 8px; }
+.activity { background: #161a20; border: 1px solid #282e38; border-radius: 9px; overflow: hidden; }
+.activity-row { display: grid; grid-template-columns: 66px 10px 1fr; gap: 10px; align-items: start; padding: 9px 12px; border-bottom: 1px solid #242a33; }
+.activity-row:last-child { border-bottom: 0; }
+.activity-row time { color: #7f8997; font-family: ui-monospace, monospace; font-size: 11px; padding-top: 2px; }
+.activity-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; background: #6f7a89; }
+.activity-row.sent .activity-dot { background: #47cf8a; }
+.activity-row.error .activity-dot { background: #ff727c; }
+.activity-row.skipped .activity-dot { background: #e9bb56; }
+.activity-row.info .activity-dot { background: #6ba9ff; }
+.activity-copy { min-width: 0; }
+.activity-line { font-size: 12px; color: #dbe1e9; }
+.activity-message { color: #9ba6b6; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+@media (max-width: 620px) {
+    .activity-row { grid-template-columns: 55px 9px 1fr; padding: 9px 10px; gap: 8px; }
+    .activity-tools select { min-width: 96px; }
+}

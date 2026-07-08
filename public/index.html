@@ -27,6 +27,20 @@
             <button id="add-recipient">+ Add recipient</button>
         </section>
         <section id="recipients" class="recipients"></section>
+
+        <section class="toolbar activity-title">
+            <h2>Activity</h2>
+            <div class="activity-tools">
+                <select id="activity-filter" aria-label="Activity filter">
+                    <option value="all">All</option>
+                    <option value="jobs">Jobs</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="errors">Errors</option>
+                </select>
+                <button id="clear-activity">Clear</button>
+            </div>
+        </section>
+        <section id="activity" class="activity"></section>
     </main>
 
     <dialog id="job-dialog">
