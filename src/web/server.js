@@ -481,11 +481,16 @@ function createWebServer(options) {
 
     app.post('/api/jobs/:id/send', async (request, response) => {
         let key = null;
+        let lockedJobId = null;
         try {
             if (status.whatsapp !== 'ready') throw new Error('WhatsApp is not ready');
             const config = loadConfig(configPath, process.env);
             const job = config.jobs.find((candidate) => candidate.id === request.params.id);
             if (!job) return response.status(404).json({ error: 'Job not found' });
+            if (schedulerManager?.beginManualRun && !schedulerManager.beginManualRun(job.id)) {
+                throw new Error('Job is currently running');
+            }
+            lockedJobId = job.id;
             key = `manual:${job.id}:${crypto.randomUUID()}`;
             await runJob(client, job, stateStore, key, {}, activity);
             if (notificationManager) {
@@ -520,6 +525,8 @@ function createWebServer(options) {
                 }
             }
             return sendJsonError(response, error, activity);
+        } finally {
+            if (lockedJobId) schedulerManager?.endManualRun?.(lockedJobId);
         }
     });
 

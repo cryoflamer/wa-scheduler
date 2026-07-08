@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { dateKey, registerJobs, runJob, SchedulerManager } = require('../src/scheduler');
+const { dateKey, occurrenceKey, registerJobs, runJob, SchedulerManager } = require('../src/scheduler');
 const { StateStore } = require('../src/state');
 
 function withState(callback) {
@@ -216,10 +216,12 @@ test('partial scheduled failures notify with persisted progress', async () => {
         }, stateStore, null, notifications);
 
         try {
-            const key = `report:${dateKey(new Date(), 'Europe/Kyiv')}`;
-            stateStore.markMessageSent(key, new Date().toISOString());
+            const legacyKey = `report:${dateKey(new Date(), 'Europe/Kyiv')}`;
+            stateStore.markMessageSent(legacyKey, new Date().toISOString());
             await tasks[0].task.execute();
-            assert.deepEqual(calls, [['job.partial', 1, key]]);
+            assert.equal(calls.length, 1);
+            assert.deepEqual(calls[0].slice(0, 2), ['job.partial', 1]);
+            assert.match(calls[0][2], /^report:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
         } finally {
             for (const { task } of tasks) task.destroy();
         }
@@ -320,6 +322,122 @@ test('pending retry state is resumed when scheduler configuration is applied', a
         manager.apply(config);
         assert.equal(timers.length, 1);
         assert.equal(timers[0].delay, 10 * 60 * 1000);
+        manager.stop();
+    });
+});
+
+
+test('occurrence keys distinguish scheduled runs on the same day', () => {
+    assert.equal(
+        occurrenceKey('report', new Date('2026-07-13T05:00:00.000Z'), 'Europe/Kyiv'),
+        'report:2026-07-13T08:00'
+    );
+    assert.equal(
+        occurrenceKey('report', new Date('2026-07-13T17:00:00.000Z'), 'Europe/Kyiv'),
+        'report:2026-07-13T20:00'
+    );
+});
+
+test('retry continues with the original job snapshot after configuration is edited', async () => {
+    await withState(async (stateStore) => {
+        const calls = [];
+        let attempts = 0;
+        const client = {
+            async sendMessage(chatId, message) {
+                attempts += 1;
+                calls.push([chatId, message]);
+                if (attempts === 1) throw new Error('temporary outage');
+                return {};
+            }
+        };
+        const manager = new SchedulerManager(client, stateStore);
+        const originalJob = {
+            id: 'report', enabled: true, schedule: '0 8 * * *', recipient: '380660000001',
+            retry: { attempts: 1, delayMinutes: 10 }, message: 'Original message', files: []
+        };
+        const editedJob = {
+            ...originalJob,
+            recipient: '380660000002',
+            message: 'Edited message'
+        };
+        const key = 'report:2026-07-13T08:00';
+
+        assert.equal((await manager.executeScheduled(originalJob, key, 0)).status, 'retrying');
+        assert.equal((await manager.executeScheduled(editedJob, key, 1)).status, 'sent');
+
+        assert.deepEqual(calls, [
+            ['380660000001@c.us', 'Original message'],
+            ['380660000001@c.us', 'Original message']
+        ]);
+        assert.deepEqual(stateStore.getRunSnapshot(key), {
+            id: 'report',
+            recipient: '380660000001',
+            message: 'Original message',
+            files: [],
+            retry: { attempts: 1, delayMinutes: 10 }
+        });
+        manager.stop();
+    });
+});
+
+test('completed same-day occurrences execute independently', async () => {
+    await withState(async (stateStore) => {
+        const calls = [];
+        const client = { async sendMessage(chatId, message) { calls.push([chatId, message]); return {}; } };
+        const manager = new SchedulerManager(client, stateStore);
+        const job = {
+            id: 'report', enabled: true, schedule: '0 8,20 * * *', recipient: '380660000000',
+            retry: { attempts: 0, delayMinutes: 10 }, message: 'Report', files: []
+        };
+
+        assert.equal((await manager.executeScheduled(job, 'report:2026-07-13T08:00', 0)).status, 'sent');
+        assert.equal((await manager.executeScheduled(job, 'report:2026-07-13T20:00', 0)).status, 'sent');
+        assert.equal(calls.length, 2);
+        assert.equal(stateStore.isComplete('report:2026-07-13T08:00'), true);
+        assert.equal(stateStore.isComplete('report:2026-07-13T20:00'), true);
+        manager.stop();
+    });
+});
+
+test('a new occurrence is blocked while an earlier occurrence is still retrying', async () => {
+    await withState(async (stateStore) => {
+        const events = [];
+        const activity = {
+            info() {}, sent() {}, error() {},
+            skipped(type, fields) { events.push([type, fields.jobId]); }
+        };
+        const manager = new SchedulerManager({}, stateStore, activity, { apply() {} });
+        const job = {
+            id: 'report', enabled: true, schedule: '0 8,20 * * *', recipient: '380660000000',
+            retry: { attempts: 2, delayMinutes: 10 }, message: 'Report', files: []
+        };
+        const earlierKey = 'report:2026-07-13T08:00';
+        stateStore.captureRunSnapshot(earlierKey, job);
+        stateStore.markRetryScheduled(earlierKey, 1, '2026-07-13T05:10:00.000Z');
+
+        const result = await manager.executeScheduled(job, 'report:2026-07-13T20:00', 0);
+
+        assert.equal(result.status, 'blocked');
+        assert.equal(result.previousRunKey, earlierKey);
+        assert.deepEqual(events, [['job.occurrence.blocked', 'report']]);
+        assert.equal(stateStore.has('report:2026-07-13T20:00'), false);
+        manager.stop();
+    });
+});
+
+test('job-level locking prevents a scheduled run from overlapping a manual run', async () => {
+    await withState(async (stateStore) => {
+        const manager = new SchedulerManager({}, stateStore, null, { apply() {} });
+        const job = {
+            id: 'report', enabled: true, schedule: '* * * * *', recipient: '380660000000',
+            retry: { attempts: 0, delayMinutes: 10 }, message: 'Report', files: []
+        };
+
+        assert.equal(manager.beginManualRun('report'), true);
+        const result = await manager.executeScheduled(job, 'report:2026-07-13T08:00', 0);
+        assert.equal(result.status, 'overlap');
+        manager.endManualRun('report');
+        assert.equal(manager.isJobActive('report'), false);
         manager.stop();
     });
 });

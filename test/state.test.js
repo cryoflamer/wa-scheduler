@@ -145,3 +145,35 @@ test('retry state is persisted and exposed as a pending scheduled run', () => {
         });
     });
 });
+
+
+test('legacy daily scheduled state migrates to the first occurrence key', () => {
+    withStore((store) => {
+        const legacyKey = 'report:2026-07-13';
+        const occurrence = 'report:2026-07-13T08:00';
+        store.markSent(legacyKey, '2026-07-13T05:00:00.000Z');
+
+        assert.equal(store.migrateLegacyScheduledRun(occurrence, 'report'), true);
+        assert.equal(store.has(legacyKey), false);
+        assert.equal(store.isComplete(occurrence), true);
+        assert.equal(store.migrateLegacyScheduledRun('report:2026-07-13T20:00', 'report'), false);
+    });
+});
+
+test('scheduled run snapshots preserve dispatch payload and fingerprint', () => {
+    withStore((store) => {
+        const key = 'report:2026-07-13T08:00';
+        const original = {
+            id: 'report', recipient: '380660000001', message: 'Original',
+            files: [{ path: 'documents/report.pdf', caption: 'Appendix' }],
+            retry: { attempts: 3, delayMinutes: 10 }
+        };
+        const edited = { ...original, recipient: '380660000002', message: 'Edited' };
+
+        assert.deepEqual(store.captureRunSnapshot(key, original), original);
+        assert.deepEqual(store.captureRunSnapshot(key, edited), original);
+        assert.deepEqual(store.getRunSnapshot(key), original);
+        assert.match(store.state[key].fingerprint, /^[0-9a-f]{64}$/);
+        assert.equal(store.state[key].jobId, 'report');
+    });
+});

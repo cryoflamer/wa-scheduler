@@ -84,9 +84,11 @@ npm start
 
 On first start, scan the QR code from WhatsApp under **Linked devices**. The client registers configured jobs after WhatsApp becomes ready.
 
-Scheduler progress is recorded in `data/state.json` under a key composed from the job id and local calendar date, for example `monday-report:2026-07-13`. Message and file sends are persisted separately. If a multi-item job fails partway through, a later run skips already recorded items and resumes with the first unsent item. The job is marked complete only after every configured item has been sent.
+Scheduler progress is recorded in `data/state.json` under a key composed from the job id and the exact scheduled occurrence in the configured timezone, for example `monday-report:2026-07-13T08:00`. Two cron occurrences on the same calendar day therefore have independent state and can both run. Message and file sends are persisted separately. If a multi-item job fails partway through, a later retry skips already recorded items and resumes with the first unsent item. The job is marked complete only after every configured item has been sent.
 
-State written by the earlier single-document scheduler remains compatible: a record already marked with `status: "sent"` is treated as a completed job.
+The first scheduled attempt also stores an immutable snapshot and SHA-256 fingerprint of the resolved recipient, message, files, captions, and retry policy. Pending retries continue from that original snapshot even when the job is edited in the dashboard before the retry fires. A new scheduled occurrence is not started while an earlier occurrence of the same job is still running or waiting for retry, and manual **Send now** is rejected while the same job is already active.
+
+State written by the earlier daily-key scheduler remains compatible: the legacy `job-id:YYYY-MM-DD` record is migrated to the first exact occurrence encountered for that date. A record already marked with `status: "sent"` remains completed and is not resent during that migration.
 
 Alternative paths can be selected with `WA_SCHEDULE_CONFIG`, `WA_STATE_FILE`, and `WA_ACTIVITY_FILE`.
 
@@ -110,7 +112,7 @@ Recipients are managed by friendly aliases in the UI. Their real WhatsApp number
 
 Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
 
-`Send now` executes the same job pipeline as scheduled delivery but uses a unique manual-run state key, so it always performs a new send without changing the daily idempotency record of the scheduled run.
+`Send now` executes the same job pipeline as scheduled delivery but uses a unique manual-run state key, so it performs a new send without changing scheduled occurrence state. The dashboard refuses a manual send while the same job already has an active scheduled or manual execution, preventing accidental concurrent duplicate delivery.
 
 The dashboard also contains a persistent Activity panel. Structured runtime events are appended to `data/activity.jsonl` and streamed live to the browser with Server-Sent Events. The latest 100 events are shown by default and can be filtered by jobs, WhatsApp, or errors, or cleared from the UI. Activity events record job ids and document basenames but do not include recipient phone numbers, message bodies, captions, or absolute local paths.
 
@@ -170,7 +172,7 @@ Each job can optionally retry a failed scheduled run. Retry is disabled by defau
 
 `attempts` is the maximum number of automatic retries after the original scheduled attempt. Retry progress is persisted in `data/state.json`, including the next retry time. If wa-scheduler or the user service restarts while a retry is pending, the pending retry is restored from state. Disabled jobs keep their pending retry state paused and resume it when enabled again.
 
-Retries use the existing item-level send state, so already sent messages and files are skipped. The first failure publishes a retry-scheduled operator notification. Intermediate retries remain quiet for providers that already received that notice because notification delivery is idempotent per provider. A successful retry publishes a recovered notification; exhausting all configured retries publishes an urgent exhausted notification.
+Retries use the immutable scheduled-run snapshot and the existing item-level send state, so edits made after a failure do not change the recipient, message, files, captions, or retry policy of an in-flight run, and already sent items are skipped. The first failure publishes a retry-scheduled operator notification. Intermediate retries remain quiet for providers that already received that notice because notification delivery is idempotent per provider. A successful retry publishes a recovered notification; exhausting all configured retries publishes an urgent exhausted notification.
 
 ## Activity retention
 

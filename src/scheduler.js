@@ -1,18 +1,7 @@
 const path = require('path');
 const cron = require('node-cron');
 const { sendDocument, sendTextMessage } = require('./whatsapp');
-
-function dateKey(date, timezone) {
-    const parts = new Intl.DateTimeFormat('en', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    }).formatToParts(date);
-    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-
-    return `${values.year}-${values.month}-${values.day}`;
-}
+const { dateKey, occurrenceKey } = require('./run_identity');
 
 function report(activity, method, type, fields, fallback) {
     if (activity) {
@@ -46,8 +35,8 @@ async function runJob(
     if (stateStore.isComplete(key)) {
         report(activity, 'skipped', 'job.skipped', {
             jobId: job.id,
-            message: 'Already sent for this date; skipping'
-        }, `Job ${job.id} already sent for this date; skipping`);
+            message: 'Already sent for this occurrence; skipping'
+        }, `Job ${job.id} already sent for this occurrence; skipping`);
         return { status: 'skipped' };
     }
 
@@ -164,10 +153,11 @@ function registerJobs(client, config, stateStore, activity = null, notifications
         const task = cron.schedule(
             job.schedule,
             async () => {
-                const key = `${job.id}:${dateKey(new Date(), config.timezone)}`;
+                const key = occurrenceKey(job.id, new Date(), config.timezone);
                 if (runScheduled) {
                     await runScheduled(job, key, config);
                 } else {
+                    stateStore.migrateLegacyScheduledRun?.(key, job.id);
                     await runLegacyScheduled(client, job, stateStore, key, activity, notifications);
                 }
             },
@@ -197,6 +187,7 @@ class SchedulerManager {
         this.config = null;
         this.retryTimers = new Map();
         this.activeRunKeys = new Set();
+        this.activeJobIds = new Set();
         this.setTimeout = options.setTimeout || setTimeout;
         this.clearTimeout = options.clearTimeout || clearTimeout;
         this.now = options.now || (() => new Date());
@@ -218,21 +209,36 @@ class SchedulerManager {
     }
 
     async executeScheduled(job, key, retryAttempt = 0) {
-        if (this.activeRunKeys.has(key)) {
+        if (retryAttempt === 0) {
+            this.stateStore.migrateLegacyScheduledRun?.(key, job.id);
+            const unresolved = this.stateStore.findUnresolvedScheduledRun?.(job.id, key);
+            if (unresolved) {
+                report(this.activity, 'skipped', 'job.occurrence.blocked', {
+                    jobId: job.id,
+                    message: 'Previous scheduled run is still unfinished',
+                    details: { previousRunKey: unresolved.key, previousStatus: unresolved.status }
+                }, `Job ${job.id} has an unfinished previous run; skipping new occurrence`);
+                return { status: 'blocked', previousRunKey: unresolved.key };
+            }
+        }
+
+        if (this.activeRunKeys.has(key) || this.activeJobIds.has(job.id)) {
             report(this.activity, 'skipped', 'job.retry.overlap', {
                 jobId: job.id,
-                message: 'Run already active; skipping overlapping attempt'
-            }, `Job ${job.id} run already active; skipping`);
+                message: 'Job already active; skipping overlapping attempt'
+            }, `Job ${job.id} already active; skipping`);
             return { status: 'overlap' };
         }
 
+        const runJobSnapshot = this.stateStore.captureRunSnapshot?.(key, job) || job;
         this.activeRunKeys.add(key);
+        this.activeJobIds.add(job.id);
         try {
-            const policy = retryPolicy(job);
+            const policy = retryPolicy(runJobSnapshot);
             const maxRetries = policy.attempts;
             const result = await runJob(
                 this.client,
-                job,
+                runJobSnapshot,
                 this.stateStore,
                 key,
                 {},
@@ -247,8 +253,8 @@ class SchedulerManager {
         } catch (error) {
             const failedAt = this.now().toISOString();
             this.stateStore.markRunFailed(key, failedAt);
-            const progress = this.stateStore.getRunDetails(key, job);
-            const policy = retryPolicy(job);
+            const progress = this.stateStore.getRunDetails(key, runJobSnapshot);
+            const policy = retryPolicy(runJobSnapshot);
             const maxRetries = policy.attempts;
 
             report(this.activity, 'error', retryAttempt > 0 ? 'job.retry.failed' : 'job.failed', {
@@ -271,7 +277,7 @@ class SchedulerManager {
 
                 if (this.notifications) {
                     await this.notifications.notify('job.retry.scheduled', {
-                        job,
+                        job: runJobSnapshot,
                         error,
                         sentItems: progress.sentItems,
                         progress,
@@ -282,7 +288,7 @@ class SchedulerManager {
                     });
                 }
 
-                this.scheduleRetry(job, key, nextAttempt, nextRetryAt);
+                this.scheduleRetry(runJobSnapshot, key, nextAttempt, nextRetryAt);
                 return { status: 'retrying', retryAttempt: nextAttempt, nextRetryAt };
             }
 
@@ -290,7 +296,7 @@ class SchedulerManager {
             if (this.notifications) {
                 const type = maxRetries > 0 ? 'job.retry.exhausted' : failureType(progress);
                 await this.notifications.notify(type, {
-                    job,
+                    job: runJobSnapshot,
                     error,
                     sentItems: progress.sentItems,
                     progress,
@@ -302,6 +308,7 @@ class SchedulerManager {
             return { status: 'failed', error };
         } finally {
             this.activeRunKeys.delete(key);
+            this.activeJobIds.delete(job.id);
         }
     }
 
@@ -320,19 +327,35 @@ class SchedulerManager {
         if (!this.config) return;
         const jobsById = new Map(this.config.jobs.filter((job) => job.enabled).map((job) => [job.id, job]));
         for (const pending of this.stateStore.listPendingRetries()) {
-            const job = jobsById.get(pending.jobId);
-            if (!job || pending.retryAttempt > retryPolicy(job).attempts) continue;
-            this.scheduleRetry(job, pending.key, pending.retryAttempt, pending.nextRetryAt);
+            const currentJob = jobsById.get(pending.jobId);
+            if (!currentJob) continue;
+            const runJobSnapshot = this.stateStore.getRunSnapshot?.(pending.key) || this.stateStore.captureRunSnapshot?.(pending.key, currentJob) || currentJob;
+            if (pending.retryAttempt > retryPolicy(runJobSnapshot).attempts) continue;
+            this.scheduleRetry(runJobSnapshot, pending.key, pending.retryAttempt, pending.nextRetryAt);
             report(this.activity, 'info', 'job.retry.resumed', {
-                jobId: job.id,
-                message: `Retry ${pending.retryAttempt} of ${retryPolicy(job).attempts} resumed`,
+                jobId: currentJob.id,
+                message: `Retry ${pending.retryAttempt} of ${retryPolicy(runJobSnapshot).attempts} resumed`,
                 details: {
                     retryAttempt: pending.retryAttempt,
-                    maxRetries: retryPolicy(job).attempts,
+                    maxRetries: retryPolicy(runJobSnapshot).attempts,
                     nextRetryAt: pending.nextRetryAt
                 }
-            }, `Job ${job.id} retry ${pending.retryAttempt} resumed`);
+            }, `Job ${currentJob.id} retry ${pending.retryAttempt} resumed`);
         }
+    }
+
+    beginManualRun(jobId) {
+        if (this.activeJobIds.has(jobId)) return false;
+        this.activeJobIds.add(jobId);
+        return true;
+    }
+
+    endManualRun(jobId) {
+        this.activeJobIds.delete(jobId);
+    }
+
+    isJobActive(jobId) {
+        return this.activeJobIds.has(jobId);
     }
 
     getNextRun(jobId) {
@@ -356,6 +379,7 @@ class SchedulerManager {
 
 module.exports = {
     dateKey,
+    occurrenceKey,
     registerJobs,
     runJob,
     SchedulerManager

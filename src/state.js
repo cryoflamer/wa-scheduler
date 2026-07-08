@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { createJobSnapshot, fingerprintJobSnapshot } = require('./run_identity');
 
 class StateStore {
     constructor(statePath = 'data/state.json') {
@@ -22,6 +23,35 @@ class StateStore {
     isFileSent(key, filePath) { return this.state[key]?.files?.[filePath]?.status === 'sent'; }
     isNotificationSent(key, eventType, provider) {
         return this.state[key]?.notifications?.[eventType]?.[provider]?.status === 'sent';
+    }
+
+    migrateLegacyScheduledRun(key, jobId) {
+        if (this.has(key)) return false;
+        const prefix = `${jobId}:`;
+        if (!key.startsWith(prefix)) return false;
+        const occurrence = key.slice(prefix.length);
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(occurrence)) return false;
+
+        const legacyKey = `${jobId}:${occurrence.slice(0, 10)}`;
+        if (!this.has(legacyKey)) return false;
+
+        this.state[key] = this.state[legacyKey];
+        delete this.state[legacyKey];
+        const record = this.ensureJobRecord(key);
+        record.jobId ||= jobId;
+        this.persist();
+        return true;
+    }
+
+    captureRunSnapshot(key, job) {
+        const record = this.ensureJobRecord(key);
+        if (!record.snapshot || typeof record.snapshot !== 'object' || Array.isArray(record.snapshot)) {
+            record.snapshot = createJobSnapshot(job);
+            record.fingerprint = fingerprintJobSnapshot(record.snapshot);
+            record.jobId = record.snapshot.id;
+            this.persist();
+        }
+        return JSON.parse(JSON.stringify(record.snapshot));
     }
 
     markRunStarted(key, startedAt) {
@@ -57,14 +87,32 @@ class StateStore {
         return Object.entries(this.state).flatMap(([key, record]) => {
             if (record?.status !== 'retrying' || !record.retry?.nextRetryAt) return [];
             const separator = key.lastIndexOf(':');
-            if (separator <= 0) return [];
+            const jobId = record.jobId || record.snapshot?.id || (separator > 0 ? key.slice(0, separator) : '');
+            if (!jobId) return [];
             return [{
                 key,
-                jobId: key.slice(0, separator),
+                jobId,
                 retryAttempt: Number(record.retry.attempt),
                 nextRetryAt: record.retry.nextRetryAt
             }];
         }).filter((entry) => Number.isInteger(entry.retryAttempt) && entry.retryAttempt > 0);
+    }
+
+    getRunSnapshot(key) {
+        const snapshot = this.state[key]?.snapshot;
+        return snapshot ? JSON.parse(JSON.stringify(snapshot)) : null;
+    }
+
+    findUnresolvedScheduledRun(jobId, excludeKey = null) {
+        for (const [key, record] of Object.entries(this.state)) {
+            if (key === excludeKey || key.startsWith('manual:')) continue;
+            const recordJobId = record?.jobId || record?.snapshot?.id;
+            if (recordJobId !== jobId && !key.startsWith(`${jobId}:`)) continue;
+            if (record?.status === 'running' || record?.status === 'retrying') {
+                return { key, status: record.status, retry: record.retry || null };
+            }
+        }
+        return null;
     }
 
     markMessageSent(key, sentAt) {
@@ -141,7 +189,7 @@ class StateStore {
     getLatestScheduledRun(job) {
         const prefix = `${job.id}:`;
         const entries = Object.entries(this.state)
-            .filter(([key]) => key.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}$/.test(key.slice(prefix.length)))
+            .filter(([key]) => key.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/.test(key.slice(prefix.length)))
             .sort(([left], [right]) => right.localeCompare(left));
         if (entries.length === 0) return null;
 
@@ -152,7 +200,7 @@ class StateStore {
 
         return {
             key,
-            date: key.slice(prefix.length),
+            date: key.slice(prefix.length, prefix.length + 10),
             status,
             sentItems,
             totalItems,
