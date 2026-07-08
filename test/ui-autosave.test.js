@@ -4,6 +4,7 @@ const fs = require('node:fs');
 
 const app = fs.readFileSync('public/app.js', 'utf8');
 const html = fs.readFileSync('public/index.html', 'utf8');
+const styles = fs.readFileSync('public/styles.css', 'utf8');
 
 test('notification settings use autosave instead of a save button', () => {
     assert.doesNotMatch(app, /save-notifications/);
@@ -43,6 +44,7 @@ test('schedule editor only shows fields relevant to the selected mode', () => {
     assert.match(app, /weekday-wrap'\)\.hidden = mode !== 'weekly'/);
     assert.match(app, /monthday-wrap'\)\.hidden = mode !== 'monthly'/);
     assert.match(app, /time-wrap'\)\.hidden = mode === 'advanced'/);
+    assert.match(styles, /\[hidden\]\s*\{\s*display:\s*none !important;/);
 });
 
 test('cron is generated and read-only outside advanced schedule mode', () => {

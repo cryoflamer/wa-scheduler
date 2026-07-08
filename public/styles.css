@@ -51,6 +51,7 @@ dialog { width: min(620px, calc(100% - 24px)); border: 1px solid #343a45; border
 dialog::backdrop { background: rgb(0 0 0 / 65%); }
 dialog form { padding: 16px; }
 .dialog-header { margin-bottom: 16px; }
+[hidden] { display: none !important; }
 label { display: grid; gap: 5px; color: #aeb8c6; font-size: 12px; margin-bottom: 12px; }
 input, select, textarea { width: 100%; border: 1px solid #343a45; border-radius: 6px; background: #101319; color: #edf1f6; padding: 8px 9px; }
 textarea { resize: vertical; }
