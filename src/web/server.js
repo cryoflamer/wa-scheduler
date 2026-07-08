@@ -164,6 +164,7 @@ function serializeNotifications(raw, envPath = '.env') {
         whatsapp: {
             enabled: whatsapp.enabled === true,
             recipientKey: recipientKey(whatsapp.recipient),
+            includeMessage: whatsapp.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(whatsapp.events || [
                 'job.completed', 'job.failed', 'job.partial',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
@@ -171,9 +172,11 @@ function serializeNotifications(raw, envPath = '.env') {
         },
         ntfy: {
             enabled: ntfy.enabled === true,
+            includeMessage: ntfy.includeMessage === true,
             server: ntfy.server || 'https://ntfy.sh',
             topicConfigured: Boolean(topic),
             maskedTopic: maskSecret(topic),
+            includeMessage: ntfy.includeMessage === true,
             events: upgradeLegacyNotificationEvents(normalizeUiEvents(ntfy.events || [
                 'job.completed', 'job.failed', 'job.partial',
                 'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
@@ -202,6 +205,7 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
         version: 2,
         whatsapp: {
             enabled: whatsapp.enabled === true,
+            includeMessage: whatsapp.includeMessage === true,
             recipient: recipient ? `\${${recipient}}` : currentRaw.notifications?.whatsapp?.recipient || '',
             events: normalizeUiEvents(whatsapp.events, [
                 'job.completed', 'job.failed', 'job.partial',
@@ -210,6 +214,7 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
         },
         ntfy: {
             enabled: ntfy.enabled === true,
+            includeMessage: ntfy.includeMessage === true,
             server: String(ntfy.server || 'https://ntfy.sh').trim(),
             topic: '${WA_NTFY_TOPIC}',
             events: normalizeUiEvents(ntfy.events)
@@ -427,10 +432,11 @@ function createWebServer(options) {
             key = `manual:${job.id}:${crypto.randomUUID()}`;
             await runJob(client, job, stateStore, key, {}, activity);
             if (notificationManager) {
-                const { sentItems } = stateStore.getRunProgress(key, job);
+                const progress = stateStore.getRunDetails(key, job);
                 await notificationManager.notify('job.manual.completed', {
                     job,
-                    sentItems,
+                    sentItems: progress.sentItems,
+                    progress,
                     idempotencyKey: key
                 });
             }
@@ -442,14 +448,15 @@ function createWebServer(options) {
                     const config = loadConfig(configPath, process.env);
                     const job = config.jobs.find((candidate) => candidate.id === request.params.id);
                     if (job) {
-                        const { sentItems, totalItems } = stateStore.getRunProgress(key, job);
-                        const type = sentItems > 0 && sentItems < totalItems
+                        const progress = stateStore.getRunDetails(key, job);
+                        const type = progress.sentItems > 0 && progress.sentItems < progress.totalItems
                             ? 'job.manual.partial'
                             : 'job.manual.failed';
                         await notificationManager.notify(type, {
                             job,
                             error,
-                            sentItems,
+                            sentItems: progress.sentItems,
+                            progress,
                             idempotencyKey: key
                         });
                     }

@@ -90,3 +90,35 @@ test('run progress counts sent messages and files', () => {
         assert.deepEqual(store.getRunProgress(key, job), { sentItems: 2, totalItems: 3 });
     });
 });
+
+test('run details identify sent and pending message and file items', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-state-details-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const key = 'report:2026-07-08';
+    const job = {
+        message: 'Report',
+        files: [
+            { path: 'documents/report.pdf' },
+            { path: 'documents/table.xlsx' }
+        ]
+    };
+
+    try {
+        stateStore.markMessageSent(key, '2026-07-08T05:00:00.000Z');
+        stateStore.markFileSent(key, 'documents/report.pdf', '2026-07-08T05:00:01.000Z');
+
+        assert.deepEqual(stateStore.getRunDetails(key, job), {
+            sentItems: 2,
+            totalItems: 3,
+            sent: [
+                { type: 'message', label: 'message', sent: true },
+                { type: 'file', label: 'report.pdf', sent: true }
+            ],
+            pending: [
+                { type: 'file', label: 'table.xlsx', sent: false }
+            ]
+        });
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

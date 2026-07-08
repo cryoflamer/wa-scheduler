@@ -78,7 +78,10 @@ function normalizeNotifications(value, environment) {
             whatsappRaw.events,
             'notifications.whatsapp.events',
             DEFAULT_WHATSAPP_NOTIFICATION_EVENTS
-        ), notifications.version)
+        ), notifications.version),
+        includeMessage: whatsappRaw.includeMessage === undefined
+            ? false
+            : requireBoolean(whatsappRaw.includeMessage, 'notifications.whatsapp.includeMessage')
     };
     const ntfy = {
         enabled: ntfyEnabled,
@@ -92,7 +95,10 @@ function normalizeNotifications(value, environment) {
             ntfyRaw.events,
             'notifications.ntfy.events',
             DEFAULT_NTFY_NOTIFICATION_EVENTS
-        ), notifications.version)
+        ), notifications.version),
+        includeMessage: ntfyRaw.includeMessage === undefined
+            ? false
+            : requireBoolean(ntfyRaw.includeMessage, 'notifications.ntfy.includeMessage')
     };
 
     return { whatsapp, ntfy };

@@ -39,19 +39,21 @@ test('schedule configuration normalizes message and files', () => {
                     enabled: false,
                     recipient: '',
                     events: [
-                    'job.completed', 'job.failed', 'job.partial',
-                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
-                ]
+                        'job.completed', 'job.failed', 'job.partial',
+                        'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+                    ],
+                    includeMessage: false
                 },
                 ntfy: {
                     enabled: false,
                     server: 'https://ntfy.sh',
                     topic: '',
                     events: [
-                    'job.completed', 'job.failed', 'job.partial',
-                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
-                    'whatsapp.disconnected'
-                ]
+                        'job.completed', 'job.failed', 'job.partial',
+                        'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
+                        'whatsapp.disconnected'
+                    ],
+                    includeMessage: false
                 }
             },
             jobs: [{
@@ -237,12 +239,12 @@ test('empty jobs array is a valid local schedule', () => {
                 whatsapp: { enabled: false, recipient: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
-                ] },
+                ], includeMessage: false },
                 ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: [
                     'job.completed', 'job.failed', 'job.partial',
                     'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
                     'whatsapp.disconnected'
-                ] }
+                ], includeMessage: false }
             },
             jobs: []
         });
@@ -275,15 +277,38 @@ test('notification providers are normalized with environment-backed secrets', ()
         assert.deepEqual(notifications.whatsapp, {
             enabled: true,
             recipient: '380660000000',
-            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed']
+            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed'],
+            includeMessage: false
         });
         assert.deepEqual(notifications.ntfy, {
             enabled: true,
             server: 'https://ntfy.sh',
             topic: 'private-topic',
-            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed']
+            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed'],
+            includeMessage: false
         });
     });
+});
+
+
+test('notification message-body option is disabled by default and validated', () => {
+    const { normalizeNotifications } = require('../src/config');
+
+    const defaults = normalizeNotifications({}, {});
+    assert.equal(defaults.whatsapp.includeMessage, false);
+    assert.equal(defaults.ntfy.includeMessage, false);
+
+    const enabled = normalizeNotifications({
+        whatsapp: { enabled: false, includeMessage: true },
+        ntfy: { enabled: false, includeMessage: true }
+    }, {});
+    assert.equal(enabled.whatsapp.includeMessage, true);
+    assert.equal(enabled.ntfy.includeMessage, true);
+
+    assert.throws(
+        () => normalizeNotifications({ whatsapp: { includeMessage: 'yes' } }, {}),
+        /notifications\.whatsapp\.includeMessage must be a boolean/
+    );
 });
 
 test('disabled notification providers do not require secrets', () => {

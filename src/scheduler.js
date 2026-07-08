@@ -75,10 +75,11 @@ async function runJob(client, job, stateStore, key, senders = {}, activity = nul
     }, `Job ${job.id} completed`);
 
     if (notifications) {
-        const { sentItems } = stateStore.getRunProgress(key, job);
+        const progress = stateStore.getRunDetails(key, job);
         await notifications.notify('job.completed', {
             job,
-            sentItems,
+            sentItems: progress.sentItems,
+            progress,
             idempotencyKey: key
         });
     }
@@ -119,12 +120,13 @@ function registerJobs(client, config, stateStore, activity = null, notifications
                         error
                     }, `Job ${job.id} failed: ${error.message}`);
                     if (notifications) {
-                        const { sentItems, totalItems } = stateStore.getRunProgress(key, job);
-                        const type = sentItems > 0 && sentItems < totalItems ? 'job.partial' : 'job.failed';
+                        const progress = stateStore.getRunDetails(key, job);
+                        const type = progress.sentItems > 0 && progress.sentItems < progress.totalItems ? 'job.partial' : 'job.failed';
                         await notifications.notify(type, {
                             job,
                             error,
-                            sentItems,
+                            sentItems: progress.sentItems,
+                            progress,
                             idempotencyKey: key
                         });
                     }

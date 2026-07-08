@@ -95,6 +95,10 @@ function renderNotifications() {
                 <label class="switch-field"><span>Enabled</span><input id="notify-whatsapp-enabled" type="checkbox" ${config.whatsapp.enabled ? 'checked' : ''}></label>
             </div>
             <label>Send to<select id="notify-whatsapp-recipient">${whatsappRecipients}</select></label>
+            <label class="notification-event notification-option">
+                <input id="notify-whatsapp-include-message" type="checkbox" ${config.whatsapp.includeMessage ? 'checked' : ''}>
+                <span>Include message body</span>
+            </label>
             <div class="notification-events">
                 ${notificationEventChecks('whatsapp', config.whatsapp.events, [
                     'job.completed', 'job.failed', 'job.partial',
@@ -111,6 +115,10 @@ function renderNotifications() {
             <label>Server<input id="notify-ntfy-server" value="${escapeHtml(config.ntfy.server)}"></label>
             <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
             <div class="muted notification-hint">Install the ntfy app on the phone and subscribe to this exact topic. A successful test confirms publication to ntfy, not phone delivery.</div>
+            <label class="notification-event notification-option">
+                <input id="notify-ntfy-include-message" type="checkbox" ${config.ntfy.includeMessage ? 'checked' : ''}>
+                <span>Include message body</span>
+            </label>
             <div class="notification-events">
                 ${notificationEventChecks('ntfy', config.ntfy.events, [
                     'job.completed', 'job.failed', 'job.partial',
@@ -136,12 +144,14 @@ async function saveNotifications() {
         whatsapp: {
             enabled: $('#notify-whatsapp-enabled').checked,
             recipientKey: $('#notify-whatsapp-recipient').value,
+            includeMessage: $('#notify-whatsapp-include-message').checked,
             events: selectedNotificationEvents('whatsapp')
         },
         ntfy: {
             enabled: $('#notify-ntfy-enabled').checked,
             server: $('#notify-ntfy-server').value,
             topic: $('#notify-ntfy-topic').value,
+            includeMessage: $('#notify-ntfy-include-message').checked,
             events: selectedNotificationEvents('ntfy')
         }
     };

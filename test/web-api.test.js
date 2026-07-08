@@ -171,8 +171,8 @@ test('notification API masks ntfy topic and persists local notification settings
     fs.writeFileSync(configPath, JSON.stringify({
         timezone: 'Europe/Kyiv',
         notifications: {
-            whatsapp: { enabled: false, recipient: '${WA_RECIPIENT_SELF}', events: ['job.completed'] },
-            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: ['job.failed'] }
+            whatsapp: { enabled: false, recipient: '${WA_RECIPIENT_SELF}', events: ['job.completed'], includeMessage: false },
+            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: ['job.failed'], includeMessage: false }
         },
         jobs: []
     }));
@@ -208,17 +208,20 @@ test('notification API masks ntfy topic and persists local notification settings
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            whatsapp: { enabled: true, recipientKey: 'WA_RECIPIENT_SELF', events: ['job.completed', 'job.failed'] },
-            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'new-secret-topic', events: ['job.failed', 'whatsapp.disconnected'] }
+            whatsapp: { enabled: true, recipientKey: 'WA_RECIPIENT_SELF', events: ['job.completed', 'job.failed'], includeMessage: true },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'new-secret-topic', events: ['job.failed', 'whatsapp.disconnected'], includeMessage: false }
         })
     });
 
     assert.equal(response.status, 200);
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     assert.equal(raw.notifications.whatsapp.recipient, '${WA_RECIPIENT_SELF}');
+    assert.equal(raw.notifications.whatsapp.includeMessage, true);
     assert.equal(raw.notifications.ntfy.topic, '${WA_NTFY_TOPIC}');
+    assert.equal(raw.notifications.ntfy.includeMessage, false);
     assert.match(fs.readFileSync(envPath, 'utf8'), /WA_NTFY_TOPIC=new-secret-topic/);
     assert.equal(applied.at(-1).ntfy.topic, 'new-secret-topic');
+    assert.equal(applied.at(-1).whatsapp.includeMessage, true);
 });
 
 test('notification test API delegates to the selected provider', async (t) => {

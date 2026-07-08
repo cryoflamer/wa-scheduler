@@ -78,21 +78,59 @@ test('failed providers remain retryable without duplicating successful providers
     }
 });
 
-test('notification text does not include job message bodies or captions', () => {
-    const notification = buildNotification('job.completed', {
-        job: {
-            id: 'report',
-            message: 'PRIVATE BODY',
-            files: [{ path: 'documents/report.pdf', caption: 'PRIVATE CAPTION' }]
-        },
-        sentItems: 2
+test('operator notifications include recipient and item details but omit message body by default', () => {
+    const job = {
+        id: 'report',
+        recipient: '380661234567',
+        message: 'PRIVATE BODY',
+        files: [
+            { path: 'documents/report.pdf', caption: 'PRIVATE CAPTION' },
+            { path: 'documents/table.xlsx', caption: '' }
+        ]
+    };
+    const notification = buildNotification('job.partial', {
+        job,
+        error: new Error('temporary failure'),
+        progress: {
+            sentItems: 2,
+            totalItems: 3,
+            sent: [{ type: 'message', label: 'message', sent: true }, { type: 'file', label: 'report.pdf', sent: true }],
+            pending: [{ type: 'file', label: 'table.xlsx', sent: false }]
+        }
+    }, {
+        environment: { WA_RECIPIENT_LYOSHA: '380661234567' }
     });
 
-    assert.doesNotMatch(notification.message, /PRIVATE BODY|PRIVATE CAPTION/);
-    assert.match(notification.message, /report completed/);
+    assert.match(notification.message, /To: LYOSHA/);
+    assert.equal(notification.message.includes('Sent:\n• message\n• report.pdf'), true);
+    assert.equal(notification.message.includes('Pending:\n• table.xlsx'), true);
+    assert.equal(notification.message.includes('Error:\ntemporary failure'), true);
+    assert.doesNotMatch(notification.message, /PRIVATE BODY|PRIVATE CAPTION|380661234567/);
 });
 
+test('message body is included in operator notifications only when enabled', () => {
+    const context = {
+        job: {
+            id: 'report',
+            recipient: '380661234567',
+            message: 'Full report message',
+            files: []
+        },
+        sentItems: 1
+    };
 
+    const hidden = buildNotification('job.completed', context, {
+        environment: { WA_RECIPIENT_OFFICE: '380661234567' },
+        includeMessage: false
+    });
+    const visible = buildNotification('job.completed', context, {
+        environment: { WA_RECIPIENT_OFFICE: '380661234567' },
+        includeMessage: true
+    });
+
+    assert.doesNotMatch(hidden.message, /Full report message/);
+    assert.equal(visible.message.includes('Message:\nFull report message'), true);
+});
 
 test('notification tests return provider acknowledgement metadata', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-ack-'));
@@ -115,6 +153,38 @@ test('notification tests return provider acknowledgement metadata', async () => 
         assert.equal(result.id, 'ntfy-test');
         assert.match(result.testId, /^[0-9a-f-]{8}$/);
         assert.ok(Date.parse(result.publishedAt));
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('providers can independently include the scheduled message body', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-message-option-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const bodies = {};
+    const manager = new NotificationManager({
+        client: {},
+        stateStore,
+        environment: { WA_RECIPIENT_LYOSHA: '380661234567' },
+        providers: {
+            whatsapp: async (_client, _config, notification) => { bodies.whatsapp = notification.message; },
+            ntfy: async (_client, _config, notification) => { bodies.ntfy = notification.message; }
+        }
+    });
+    manager.apply({
+        whatsapp: { enabled: true, recipient: '380660000000', events: ['job.completed'], includeMessage: false },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: ['job.completed'], includeMessage: true }
+    });
+
+    try {
+        await manager.notify('job.completed', {
+            job: { id: 'report', recipient: '380661234567', message: 'Private body', files: [] },
+            sentItems: 1,
+            idempotencyKey: 'report:2026-07-08'
+        });
+
+        assert.doesNotMatch(bodies.whatsapp, /Private body/);
+        assert.equal(bodies.ntfy.includes('Message:\nPrivate body'), true);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

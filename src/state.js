@@ -61,11 +61,38 @@ class StateStore {
         this.persist();
     }
 
-    getRunProgress(key, job) {
+    getRunDetails(key, job) {
         const record = this.state[key] || {};
-        const sentItems = (record.message?.status === 'sent' ? 1 : 0)
-            + job.files.filter((file) => record.files?.[file.path]?.status === 'sent').length;
-        const totalItems = (job.message ? 1 : 0) + job.files.length;
+        const items = [];
+
+        if (job.message) {
+            items.push({
+                type: 'message',
+                label: 'message',
+                sent: record.message?.status === 'sent'
+            });
+        }
+
+        for (const file of job.files) {
+            items.push({
+                type: 'file',
+                label: path.basename(file.path),
+                sent: record.files?.[file.path]?.status === 'sent'
+            });
+        }
+
+        const sent = items.filter((item) => item.sent);
+        const pending = items.filter((item) => !item.sent);
+        return {
+            sentItems: sent.length,
+            totalItems: items.length,
+            sent,
+            pending
+        };
+    }
+
+    getRunProgress(key, job) {
+        const { sentItems, totalItems } = this.getRunDetails(key, job);
         return { sentItems, totalItems };
     }
 

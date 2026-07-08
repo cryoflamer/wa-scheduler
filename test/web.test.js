@@ -49,6 +49,8 @@ test('notification serialization exposes aliases and masks ntfy secrets', () => 
         }, envPath);
         assert.equal(serialized.whatsapp.recipientKey, 'WA_RECIPIENT_SELF');
         assert.equal(serialized.ntfy.topicConfigured, true);
+        assert.equal(serialized.whatsapp.includeMessage, false);
+        assert.equal(serialized.ntfy.includeMessage, false);
         assert.doesNotMatch(JSON.stringify(serialized), /private-topic-value/);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
