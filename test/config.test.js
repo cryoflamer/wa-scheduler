@@ -38,13 +38,20 @@ test('schedule configuration normalizes message and files', () => {
                 whatsapp: {
                     enabled: false,
                     recipient: '',
-                    events: ['job.completed', 'job.failed', 'job.partial']
+                    events: [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+                ]
                 },
                 ntfy: {
                     enabled: false,
                     server: 'https://ntfy.sh',
                     topic: '',
-                    events: ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected']
+                    events: [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
+                    'whatsapp.disconnected'
+                ]
                 }
             },
             jobs: [{
@@ -227,8 +234,15 @@ test('empty jobs array is a valid local schedule', () => {
         assert.deepEqual(loadConfig(configPath, {}), {
             timezone: 'Europe/Kyiv',
             notifications: {
-                whatsapp: { enabled: false, recipient: '', events: ['job.completed', 'job.failed', 'job.partial'] },
-                ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'] }
+                whatsapp: { enabled: false, recipient: '', events: [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+                ] },
+                ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
+                    'whatsapp.disconnected'
+                ] }
             },
             jobs: []
         });
@@ -261,13 +275,13 @@ test('notification providers are normalized with environment-backed secrets', ()
         assert.deepEqual(notifications.whatsapp, {
             enabled: true,
             recipient: '380660000000',
-            events: ['job.completed', 'job.failed']
+            events: ['job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed']
         });
         assert.deepEqual(notifications.ntfy, {
             enabled: true,
             server: 'https://ntfy.sh',
             topic: 'private-topic',
-            events: ['job.failed', 'whatsapp.disconnected']
+            events: ['job.failed', 'whatsapp.disconnected', 'job.manual.failed']
         });
     });
 });
@@ -285,4 +299,31 @@ test('disabled notification providers do not require secrets', () => {
         assert.equal(notifications.whatsapp.enabled, false);
         assert.equal(notifications.ntfy.enabled, false);
     });
+});
+
+test('legacy notification settings inherit manual send events', () => {
+    const { normalizeNotifications } = require('../src/config');
+    const normalized = normalizeNotifications({
+        whatsapp: { enabled: false, events: ['job.completed', 'job.failed'] },
+        ntfy: { enabled: false, events: ['job.partial', 'whatsapp.disconnected'] }
+    }, {});
+
+    assert.deepEqual(normalized.whatsapp.events, [
+        'job.completed', 'job.failed', 'job.manual.completed', 'job.manual.failed'
+    ]);
+    assert.deepEqual(normalized.ntfy.events, [
+        'job.partial', 'whatsapp.disconnected', 'job.manual.partial'
+    ]);
+});
+
+test('notification settings version 2 can disable manual send events explicitly', () => {
+    const { normalizeNotifications } = require('../src/config');
+    const normalized = normalizeNotifications({
+        version: 2,
+        whatsapp: { enabled: false, events: ['job.completed'] },
+        ntfy: { enabled: false, events: ['job.failed'] }
+    }, {});
+
+    assert.deepEqual(normalized.whatsapp.events, ['job.completed']);
+    assert.deepEqual(normalized.ntfy.events, ['job.failed']);
 });

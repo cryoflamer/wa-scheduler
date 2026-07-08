@@ -8,7 +8,8 @@ const {
     loadConfig,
     loadRawConfig,
     normalizeConfig,
-    saveRawConfig
+    saveRawConfig,
+    upgradeLegacyNotificationEvents
 } = require('../config');
 const {
     deleteRecipient,
@@ -22,7 +23,15 @@ const { loadEnvValue, maskSecret, saveEnvValue } = require('../env');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 const NTFY_TOPIC_KEY = 'WA_NTFY_TOPIC';
-const NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'];
+const NOTIFICATION_EVENTS = [
+    'job.completed',
+    'job.failed',
+    'job.partial',
+    'job.manual.completed',
+    'job.manual.failed',
+    'job.manual.partial',
+    'whatsapp.disconnected'
+];
 
 function decodeMultipartFilename(filename) {
     const value = String(filename || '');
@@ -151,17 +160,25 @@ function serializeNotifications(raw, envPath = '.env') {
     const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
 
     return {
+        version: 2,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             recipientKey: recipientKey(whatsapp.recipient),
-            events: normalizeUiEvents(whatsapp.events || ['job.completed', 'job.failed', 'job.partial'])
+            events: upgradeLegacyNotificationEvents(normalizeUiEvents(whatsapp.events || [
+                'job.completed', 'job.failed', 'job.partial',
+                'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+            ]), raw.notifications?.version)
         },
         ntfy: {
             enabled: ntfy.enabled === true,
             server: ntfy.server || 'https://ntfy.sh',
             topicConfigured: Boolean(topic),
             maskedTopic: maskSecret(topic),
-            events: normalizeUiEvents(ntfy.events || ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'])
+            events: upgradeLegacyNotificationEvents(normalizeUiEvents(ntfy.events || [
+                'job.completed', 'job.failed', 'job.partial',
+                'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
+                'whatsapp.disconnected'
+            ]), raw.notifications?.version)
         }
     };
 }
@@ -182,10 +199,14 @@ function notificationsFromBody(body, currentRaw, envPath = '.env') {
     if (topic) saveEnvValue(NTFY_TOPIC_KEY, topic, envPath);
 
     return {
+        version: 2,
         whatsapp: {
             enabled: whatsapp.enabled === true,
             recipient: recipient ? `\${${recipient}}` : currentRaw.notifications?.whatsapp?.recipient || '',
-            events: normalizeUiEvents(whatsapp.events, ['job.completed', 'job.failed', 'job.partial'])
+            events: normalizeUiEvents(whatsapp.events, [
+                'job.completed', 'job.failed', 'job.partial',
+                'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+            ])
         },
         ntfy: {
             enabled: ntfy.enabled === true,
@@ -309,9 +330,14 @@ function createWebServer(options) {
                 ok: true,
                 provider,
                 accepted: result?.accepted !== false,
+                testId: result?.testId || null,
+                publishedAt: result?.publishedAt || null,
+                messageId: result?.id || null,
                 message: provider === 'ntfy'
-                    ? 'Test notification published to ntfy. The phone must be subscribed to this exact topic.'
-                    : 'Test notification sent to WhatsApp.'
+                    ? result?.id
+                        ? `Published to ntfy · Message ID: ${result.id} · Test ID: ${result.testId}`
+                        : `Published to ntfy · Test ID: ${result?.testId || 'unknown'}`
+                    : `Test notification sent to WhatsApp · Test ID: ${result?.testId || 'unknown'}`
             });
         } catch (error) {
             sendJsonError(response, error, activity);
@@ -400,9 +426,35 @@ function createWebServer(options) {
             if (!job) return response.status(404).json({ error: 'Job not found' });
             key = `manual:${job.id}:${crypto.randomUUID()}`;
             await runJob(client, job, stateStore, key, {}, activity);
+            if (notificationManager) {
+                const { sentItems } = stateStore.getRunProgress(key, job);
+                await notificationManager.notify('job.manual.completed', {
+                    job,
+                    sentItems,
+                    idempotencyKey: key
+                });
+            }
             return response.json({ ok: true });
         } catch (error) {
-            if (key) stateStore.markRunFailed(key, new Date().toISOString());
+            if (key) {
+                stateStore.markRunFailed(key, new Date().toISOString());
+                if (notificationManager) {
+                    const config = loadConfig(configPath, process.env);
+                    const job = config.jobs.find((candidate) => candidate.id === request.params.id);
+                    if (job) {
+                        const { sentItems, totalItems } = stateStore.getRunProgress(key, job);
+                        const type = sentItems > 0 && sentItems < totalItems
+                            ? 'job.manual.partial'
+                            : 'job.manual.failed';
+                        await notificationManager.notify(type, {
+                            job,
+                            error,
+                            sentItems,
+                            idempotencyKey: key
+                        });
+                    }
+                }
+            }
             return sendJsonError(response, error, activity);
         }
     });

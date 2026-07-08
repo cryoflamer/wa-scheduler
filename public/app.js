@@ -61,6 +61,9 @@ const notificationEventLabels = {
     'job.completed': 'Job completed',
     'job.failed': 'Job failed',
     'job.partial': 'Job partially sent',
+    'job.manual.completed': 'Manual send completed',
+    'job.manual.failed': 'Manual send failed',
+    'job.manual.partial': 'Manual send partially sent',
     'whatsapp.disconnected': 'WhatsApp disconnected'
 };
 
@@ -93,7 +96,10 @@ function renderNotifications() {
             </div>
             <label>Send to<select id="notify-whatsapp-recipient">${whatsappRecipients}</select></label>
             <div class="notification-events">
-                ${notificationEventChecks('whatsapp', config.whatsapp.events, ['job.completed', 'job.failed', 'job.partial'])}
+                ${notificationEventChecks('whatsapp', config.whatsapp.events, [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial'
+                ])}
             </div>
             <button data-test-notification="whatsapp">Send test</button>
         </article>
@@ -106,7 +112,11 @@ function renderNotifications() {
             <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
             <div class="muted notification-hint">Install the ntfy app on the phone and subscribe to this exact topic. A successful test confirms publication to ntfy, not phone delivery.</div>
             <div class="notification-events">
-                ${notificationEventChecks('ntfy', config.ntfy.events, ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'])}
+                ${notificationEventChecks('ntfy', config.ntfy.events, [
+                    'job.completed', 'job.failed', 'job.partial',
+                    'job.manual.completed', 'job.manual.failed', 'job.manual.partial',
+                    'whatsapp.disconnected'
+                ])}
             </div>
             <button data-test-notification="ntfy">Send test</button>
         </article>

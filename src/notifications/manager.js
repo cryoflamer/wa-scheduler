@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { safeErrorMessage } = require('../activity');
 const { sendWhatsAppNotification } = require('./whatsapp');
 const { sendNtfyNotification } = require('./ntfy');
@@ -35,6 +36,30 @@ function buildNotification(type, context = {}) {
             message: `❌ ${job.id} failed\n\n${safeErrorMessage(context.error)}`
         };
     }
+    if (type === 'job.manual.completed') {
+        return {
+            title: 'wa-scheduler',
+            priority: 'default',
+            tags: ['white_check_mark'],
+            message: `✅ ${job.id} sent manually\n\n${sentItems} item${sentItems === 1 ? '' : 's'} sent successfully.`
+        };
+    }
+    if (type === 'job.manual.partial') {
+        return {
+            title: 'wa-scheduler warning',
+            priority: 'high',
+            tags: ['warning'],
+            message: `⚠️ ${job.id} manual send partially completed\n\n${sentItems} of ${totalItems} items sent. Unsent items remain pending.`
+        };
+    }
+    if (type === 'job.manual.failed') {
+        return {
+            title: 'wa-scheduler failed',
+            priority: 'high',
+            tags: ['x'],
+            message: `❌ ${job.id} manual send failed\n\n${safeErrorMessage(context.error)}`
+        };
+    }
     if (type === 'whatsapp.disconnected') {
         return {
             title: 'WhatsApp disconnected',
@@ -48,7 +73,7 @@ function buildNotification(type, context = {}) {
             title: 'wa-scheduler',
             priority: 'default',
             tags: ['white_check_mark'],
-            message: '✅ wa-scheduler test notification\n\nNotifications are configured correctly.'
+            message: `✅ wa-scheduler test notification\n\nTest ID: ${context.testId}\nPublished: ${context.publishedAt}`
         };
     }
     throw new Error(`Unsupported notification type: ${type}`);
@@ -116,12 +141,25 @@ class NotificationManager {
         if (!providerConfig.enabled) {
             throw new Error(`${providerName} notifications are not enabled`);
         }
-        const result = await provider(this.client, providerConfig, buildNotification('notification.test'));
+        const testId = crypto.randomUUID().slice(0, 8);
+        const publishedAt = new Date().toISOString();
+        const result = await provider(
+            this.client,
+            providerConfig,
+            buildNotification('notification.test', { testId, publishedAt })
+        );
+        const acknowledgement = result || { accepted: true };
         this.activity?.sent('notification.test.sent', {
-            message: `${providerName} test notification sent`,
-            details: { provider: providerName }
+            message: providerName === 'ntfy' && acknowledgement.id
+                ? `ntfy test published · ${acknowledgement.id}`
+                : `${providerName} test notification sent`,
+            details: {
+                provider: providerName,
+                testId,
+                ...(acknowledgement.id ? { messageId: acknowledgement.id } : {})
+            }
         });
-        return result || { accepted: true };
+        return { ...acknowledgement, testId, publishedAt };
     }
 
     wasSent(key, type, provider) {

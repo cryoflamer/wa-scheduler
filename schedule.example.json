@@ -1,13 +1,17 @@
 {
   "timezone": "Europe/Kyiv",
   "notifications": {
+    "version": 2,
     "whatsapp": {
       "enabled": false,
       "recipient": "${WA_RECIPIENT_SELF}",
       "events": [
         "job.completed",
         "job.failed",
-        "job.partial"
+        "job.partial",
+        "job.manual.completed",
+        "job.manual.failed",
+        "job.manual.partial"
       ]
     },
     "ntfy": {
@@ -18,6 +22,9 @@
         "job.completed",
         "job.failed",
         "job.partial",
+        "job.manual.completed",
+        "job.manual.failed",
+        "job.manual.partial",
         "whatsapp.disconnected"
       ]
     }

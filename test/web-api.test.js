@@ -246,5 +246,81 @@ test('notification test API delegates to the selected provider', async (t) => {
     const body = await response.json();
     assert.equal(body.provider, 'ntfy');
     assert.equal(body.accepted, true);
-    assert.match(body.message, /published to ntfy/);
+    assert.match(body.message, /Published to ntfy/);
+});
+
+test('manual job sends notify the configured operator after delivery', async (t) => {
+    const { StateStore } = require('../src/state');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-manual-notification-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            version: 2,
+            whatsapp: { enabled: true, recipient: '${WA_RECIPIENT_SELF}', events: ['job.manual.completed'] },
+            ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: [] }
+        },
+        jobs: [{ id: 'report', schedule: '0 8 * * 1', recipient: '${WA_RECIPIENT_OFFICE}', message: 'Report' }]
+    }));
+    process.env.WA_RECIPIENT_SELF = '380660000000';
+    process.env.WA_RECIPIENT_OFFICE = '380661234567';
+
+    const notifications = [];
+    const notificationManager = {
+        apply() {},
+        async notify(type, context) { notifications.push({ type, jobId: context.job.id, sentItems: context.sentItems }); }
+    };
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const client = { async sendMessage() { return {}; } };
+    const app = createWebServer({
+        client, stateStore, schedulerManager, notificationManager,
+        configPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_RECIPIENT_SELF;
+        delete process.env.WA_RECIPIENT_OFFICE;
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs/report/send`, { method: 'POST' });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(notifications, [{ type: 'job.manual.completed', jobId: 'report', sentItems: 1 }]);
+});
+
+test('ntfy test API returns publication diagnostics', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-ntfy-diagnostics-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({ timezone: 'Europe/Kyiv', jobs: [] }));
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client: {}, stateStore: {}, schedulerManager,
+        notificationManager: {
+            apply() {},
+            async test() {
+                return { accepted: true, id: 'ntfy-message-id', testId: 'abc12345', publishedAt: '2026-07-08T05:00:00.000Z' };
+            }
+        },
+        configPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications/test/ntfy`, { method: 'POST' });
+    const body = await response.json();
+
+    assert.equal(body.messageId, 'ntfy-message-id');
+    assert.equal(body.testId, 'abc12345');
+    assert.equal(body.publishedAt, '2026-07-08T05:00:00.000Z');
+    assert.match(body.message, /Message ID: ntfy-message-id/);
 });

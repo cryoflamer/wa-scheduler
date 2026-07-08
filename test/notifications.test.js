@@ -110,7 +110,11 @@ test('notification tests return provider acknowledgement metadata', async () => 
     });
 
     try {
-        assert.deepEqual(await manager.test('ntfy'), { accepted: true, id: 'ntfy-test' });
+        const result = await manager.test('ntfy');
+        assert.equal(result.accepted, true);
+        assert.equal(result.id, 'ntfy-test');
+        assert.match(result.testId, /^[0-9a-f-]{8}$/);
+        assert.ok(Date.parse(result.publishedAt));
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -129,4 +133,54 @@ test('ntfy provider posts to the configured topic with priority headers', async 
     assert.equal(request.options.headers.Priority, 'high');
     assert.equal(request.options.body, 'failed');
     assert.equal(topicUrl('https://example.com/base/', 'topic'), 'https://example.com/base/topic');
+});
+
+test('manual notification text distinguishes dashboard sends from scheduled runs', () => {
+    const job = { id: 'report', message: 'Report', files: [{ path: 'documents/report.pdf', caption: '' }] };
+
+    const completed = buildNotification('job.manual.completed', { job, sentItems: 2 });
+    const partial = buildNotification('job.manual.partial', { job, sentItems: 1 });
+    const failed = buildNotification('job.manual.failed', { job, error: new Error('offline') });
+
+    assert.match(completed.message, /sent manually/);
+    assert.match(partial.message, /manual send partially completed/);
+    assert.match(failed.message, /manual send failed/);
+});
+
+test('notification tests are unique and expose ntfy acknowledgement ids in activity', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-test-diagnostics-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const activityEvents = [];
+    const notifications = [];
+    const manager = new NotificationManager({
+        client: {},
+        stateStore,
+        activity: {
+            sent(type, fields) { activityEvents.push({ type, ...fields }); }
+        },
+        providers: {
+            whatsapp: async () => ({ accepted: true }),
+            ntfy: async (_client, _config, notification) => {
+                notifications.push(notification.message);
+                return { accepted: true, id: `ntfy-${notifications.length}` };
+            }
+        }
+    });
+    manager.apply({
+        whatsapp: { enabled: false, recipient: '', events: [] },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: [] }
+    });
+
+    try {
+        const first = await manager.test('ntfy');
+        const second = await manager.test('ntfy');
+
+        assert.notEqual(first.testId, second.testId);
+        assert.notEqual(notifications[0], notifications[1]);
+        assert.equal(first.id, 'ntfy-1');
+        assert.equal(activityEvents[0].details.messageId, 'ntfy-1');
+        assert.match(activityEvents[0].message, /ntfy-1/);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
 });

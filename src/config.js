@@ -3,14 +3,48 @@ const path = require('path');
 
 const ENVIRONMENT_VARIABLE_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
-const DEFAULT_WHATSAPP_NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial'];
-const DEFAULT_NTFY_NOTIFICATION_EVENTS = ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'];
+const DEFAULT_WHATSAPP_NOTIFICATION_EVENTS = [
+    'job.completed',
+    'job.failed',
+    'job.partial',
+    'job.manual.completed',
+    'job.manual.failed',
+    'job.manual.partial'
+];
+const DEFAULT_NTFY_NOTIFICATION_EVENTS = [
+    'job.completed',
+    'job.failed',
+    'job.partial',
+    'job.manual.completed',
+    'job.manual.failed',
+    'job.manual.partial',
+    'whatsapp.disconnected'
+];
 const ALLOWED_NOTIFICATION_EVENTS = new Set([
     'job.completed',
     'job.failed',
     'job.partial',
+    'job.manual.completed',
+    'job.manual.failed',
+    'job.manual.partial',
     'whatsapp.disconnected'
 ]);
+
+const MANUAL_EVENT_BY_SCHEDULED_EVENT = {
+    'job.completed': 'job.manual.completed',
+    'job.failed': 'job.manual.failed',
+    'job.partial': 'job.manual.partial'
+};
+
+function upgradeLegacyNotificationEvents(events, version) {
+    if (Number(version || 1) >= 2) return [...events];
+    const upgraded = [...events];
+    for (const event of events) {
+        const manualEvent = MANUAL_EVENT_BY_SCHEDULED_EVENT[event];
+        if (manualEvent && !upgraded.includes(manualEvent)) upgraded.push(manualEvent);
+    }
+    return upgraded;
+}
 
 function normalizeNotificationEvents(value, fieldName, defaults) {
     if (value === undefined) return [...defaults];
@@ -40,11 +74,11 @@ function normalizeNotifications(value, environment) {
         recipient: whatsappEnabled
             ? requireExpandedString(whatsappRaw.recipient, 'notifications.whatsapp.recipient', environment)
             : '',
-        events: normalizeNotificationEvents(
+        events: upgradeLegacyNotificationEvents(normalizeNotificationEvents(
             whatsappRaw.events,
             'notifications.whatsapp.events',
             DEFAULT_WHATSAPP_NOTIFICATION_EVENTS
-        )
+        ), notifications.version)
     };
     const ntfy = {
         enabled: ntfyEnabled,
@@ -54,11 +88,11 @@ function normalizeNotifications(value, environment) {
         topic: ntfyEnabled
             ? requireExpandedString(ntfyRaw.topic, 'notifications.ntfy.topic', environment)
             : '',
-        events: normalizeNotificationEvents(
+        events: upgradeLegacyNotificationEvents(normalizeNotificationEvents(
             ntfyRaw.events,
             'notifications.ntfy.events',
             DEFAULT_NTFY_NOTIFICATION_EVENTS
-        )
+        ), notifications.version)
     };
 
     return { whatsapp, ntfy };
@@ -265,5 +299,6 @@ module.exports = {
     loadRawConfig,
     normalizeConfig,
     normalizeNotifications,
-    saveRawConfig
+    saveRawConfig,
+    upgradeLegacyNotificationEvents
 };
