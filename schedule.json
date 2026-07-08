@@ -2,15 +2,14 @@
   "timezone": "Europe/Kyiv",
   "jobs": [
     {
-      "id": "monday-report",
+      "id": "monday-report2",
       "schedule": "0 8 * * 1",
       "recipient": "${WA_RECIPIENT_SELF}",
       "message": "Доброго ранку. Надсилаю документи за понеділок.",
       "files": [
-        "documents/report.pdf",
         {
-          "path": "documents/table.xlsx",
-          "caption": "Додаток 1"
+          "path": "documents/compatch-local-scheduler-dashboard.patch",
+          "caption": "тест"
         }
       ]
     }
