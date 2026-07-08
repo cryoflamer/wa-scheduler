@@ -398,12 +398,19 @@ function updateRetryFields() {
     $('#job-retry-fields').hidden = !$('#job-retry-enabled').checked;
 }
 
+function updateCronPreview() {
+    if ($('#schedule-mode').value === 'advanced') return;
+    $('#cron').value = formToCron();
+}
+
 function updateScheduleFields() {
     const mode = $('#schedule-mode').value;
     $('#weekday-wrap').hidden = mode !== 'weekly';
     $('#monthday-wrap').hidden = mode !== 'monthly';
     $('#time-wrap').hidden = mode === 'advanced';
-    $('#cron-wrap').hidden = mode !== 'advanced';
+    $('#cron-wrap').hidden = false;
+    $('#cron').readOnly = mode !== 'advanced';
+    updateCronPreview();
 }
 
 function renderFiles() {
@@ -443,6 +450,9 @@ function openJob(job = null) {
 
 $('#weekday').innerHTML = weekdays.map((day, index) => `<option value="${index}">${day}</option>`).join('');
 $('#schedule-mode').addEventListener('change', updateScheduleFields);
+$('#weekday').addEventListener('change', updateCronPreview);
+$('#monthday').addEventListener('input', updateCronPreview);
+$('#schedule-time').addEventListener('input', updateCronPreview);
 $('#job-retry-enabled').addEventListener('change', updateRetryFields);
 $('#add-job').addEventListener('click', () => openJob());
 $('#add-recipient').addEventListener('click', () => {
