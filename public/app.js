@@ -7,6 +7,7 @@ const recipientDialog = $('#recipient-dialog');
 const activityEl = $('#activity');
 const notificationsEl = $('#notifications');
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const notificationSave = { timer: null, retryTimer: null, dirty: false, saving: null, revision: 0, retryRevision: null };
 
 function formatDateTime(value) {
     if (!value) return '';
@@ -130,7 +131,6 @@ function renderNotifications() {
         </article>
         <div class="notification-actions">
             <p id="notification-error" class="error"></p>
-            <button id="save-notifications" class="primary">Save notifications</button>
         </div>
     `;
 }
@@ -139,8 +139,12 @@ function selectedNotificationEvents(provider) {
     return [...document.querySelectorAll(`[data-notification-event="${provider}"]:checked`)].map((input) => input.value);
 }
 
-async function saveNotifications() {
-    const body = {
+function notificationFormReady() {
+    return Boolean($('#notify-whatsapp-enabled') && $('#notify-ntfy-enabled'));
+}
+
+function notificationBody() {
+    return {
         whatsapp: {
             enabled: $('#notify-whatsapp-enabled').checked,
             recipientKey: $('#notify-whatsapp-recipient').value,
@@ -155,12 +159,87 @@ async function saveNotifications() {
             events: selectedNotificationEvents('ntfy')
         }
     };
-    state.notifications = await api('/api/notifications', {
+}
+
+function setNotificationSaveStatus(status, message = '') {
+    const indicator = $('#notification-save-status');
+    if (indicator) {
+        indicator.className = `notification-save-status ${status}`;
+        indicator.textContent = status === 'saving' ? 'Saving…'
+            : status === 'failed' ? 'Save failed'
+                : 'Saved ✓';
+    }
+    const error = $('#notification-error');
+    if (error) error.textContent = message;
+}
+
+function markNotificationDirty() {
+    notificationSave.dirty = true;
+    notificationSave.revision += 1;
+    setNotificationSaveStatus('saving');
+}
+
+async function saveNotifications({ allowRetry = true } = {}) {
+    if (!notificationFormReady()) return state.notifications;
+    if (notificationSave.saving) {
+        await notificationSave.saving;
+        if (!notificationSave.dirty) return state.notifications;
+    }
+
+    clearTimeout(notificationSave.timer);
+    notificationSave.timer = null;
+    const revision = notificationSave.revision;
+    const body = notificationBody();
+    notificationSave.dirty = false;
+    setNotificationSaveStatus('saving');
+
+    const request = api('/api/notifications', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     });
-    renderNotifications();
+    notificationSave.saving = request;
+
+    try {
+        state.notifications = await request;
+        notificationSave.retryRevision = null;
+        if (notificationSave.revision === revision && !notificationSave.dirty) {
+            setNotificationSaveStatus('saved');
+        }
+        return state.notifications;
+    } catch (error) {
+        notificationSave.dirty = true;
+        setNotificationSaveStatus('failed', error.message);
+        if (allowRetry && notificationSave.retryRevision !== revision) {
+            notificationSave.retryRevision = revision;
+            notificationSave.retryTimer = setTimeout(() => {
+                notificationSave.retryTimer = null;
+                void saveNotifications({ allowRetry: false });
+            }, 3000);
+        }
+        throw error;
+    } finally {
+        if (notificationSave.saving === request) notificationSave.saving = null;
+    }
+}
+
+function queueNotificationSave(delay = 600) {
+    if (!notificationFormReady()) return;
+    markNotificationDirty();
+    clearTimeout(notificationSave.timer);
+    notificationSave.timer = setTimeout(() => {
+        notificationSave.timer = null;
+        saveNotifications().catch(() => {});
+    }, delay);
+}
+
+async function flushNotificationSave() {
+    clearTimeout(notificationSave.timer);
+    notificationSave.timer = null;
+    clearTimeout(notificationSave.retryTimer);
+    notificationSave.retryTimer = null;
+    if (notificationSave.saving) await notificationSave.saving.catch(() => {});
+    if (notificationSave.dirty) await saveNotifications();
 }
 
 function activityMatchesFilter(event) {
@@ -330,19 +409,16 @@ document.addEventListener('click', async (event) => {
         state.editingFiles.splice(Number(event.target.dataset.removeFile), 1);
         renderFiles();
     }
-    if (event.target.id === 'save-notifications') {
-        event.target.disabled = true;
-        try { await saveNotifications(); toast('Notifications saved'); }
-        catch (error) { $('#notification-error').textContent = error.message; }
-        finally { event.target.disabled = false; }
-    }
     if (event.target.dataset.testNotification) {
         event.target.disabled = true;
         const provider = event.target.dataset.testNotification;
         try {
             const enabled = $(`#notify-${provider}-enabled`);
-            if (enabled) enabled.checked = true;
-            await saveNotifications();
+            if (enabled && !enabled.checked) {
+                enabled.checked = true;
+                queueNotificationSave(0);
+            }
+            await flushNotificationSave();
             const result = await api(`/api/notifications/test/${encodeURIComponent(provider)}`, { method: 'POST' });
             toast(result.message || 'Test notification sent');
         } catch (error) { $('#notification-error').textContent = error.message; }
@@ -371,6 +447,23 @@ document.addEventListener('click', async (event) => {
         try { await api(`/api/recipients/${encodeURIComponent(event.target.dataset.deleteRecipient)}`, { method: 'DELETE' }); await refresh(); toast('Recipient deleted'); }
         catch (error) { toast(error.message); }
     }
+});
+
+
+notificationsEl.addEventListener('change', (event) => {
+    if (!event.target.closest('.notification-card')) return;
+    queueNotificationSave(0);
+});
+
+notificationsEl.addEventListener('input', (event) => {
+    if (!event.target.matches('#notify-ntfy-server, #notify-ntfy-topic')) return;
+    queueNotificationSave(600);
+});
+
+window.addEventListener('beforeunload', (event) => {
+    if (!notificationSave.dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
 });
 
 $('#job-files').addEventListener('input', (event) => {

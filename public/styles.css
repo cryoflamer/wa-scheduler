@@ -114,3 +114,9 @@ textarea { resize: vertical; }
 }
 
 .notification-hint { margin-top: -0.2rem; font-size: 0.82rem; line-height: 1.35; }
+
+.notification-save-status { font-size: 12px; color: #8e98a8; }
+.notification-save-status.saving { color: #f2ca65; }
+.notification-save-status.saved { color: #69dfa7; }
+.notification-save-status.failed { color: #ff9098; }
+.notification-actions { min-height: 18px; }
