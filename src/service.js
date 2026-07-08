@@ -14,10 +14,16 @@ function buildUnit({ projectRoot = path.resolve('.'), nodePath = process.execPat
 }
 
 function runSystemctl(args, options = {}) {
-    const result = spawnSync('systemctl', ['--user', ...args], { encoding: 'utf8', ...options });
+    const { acceptedStatuses = [0], ...spawnOptions } = options;
+    const result = spawnSync('systemctl', ['--user', ...args], {
+        encoding: 'utf8',
+        ...spawnOptions
+    });
     if (result.error) throw new Error(`systemctl is unavailable: ${result.error.message}`);
-    if (result.status !== 0) throw new Error((result.stderr || result.stdout || 'systemctl failed').trim());
-    return result.stdout.trim();
+    if (!acceptedStatuses.includes(result.status)) {
+        throw new Error((result.stderr || result.stdout || 'systemctl failed').trim());
+    }
+    return (result.stdout || result.stderr || '').trim();
 }
 
 function installService(options = {}) {
@@ -39,7 +45,10 @@ function removeService(options = {}) {
 }
 
 function serviceStatus(options = {}) {
-    return (options.runSystemctl || runSystemctl)(['status', SERVICE_NAME, '--no-pager']);
+    return (options.runSystemctl || runSystemctl)(
+        ['status', SERVICE_NAME, '--no-pager'],
+        { acceptedStatuses: [0, 3] }
+    );
 }
 
 module.exports = { SERVICE_NAME, buildUnit, installService, removeService, servicePath, serviceStatus };

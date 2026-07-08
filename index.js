@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { ActivityLog } = require('./src/activity');
-const { loadConfig } = require('./src/config');
+const { ensureLocalConfig, loadConfig } = require('./src/config');
 const { SchedulerManager } = require('./src/scheduler');
 const { StateStore } = require('./src/state');
 const { createShutdownHandler } = require('./src/runtime');
@@ -10,8 +10,16 @@ const { createWebServer } = require('./src/web/server');
 
 async function main() {
     const configPath = process.env.WA_SCHEDULE_CONFIG || 'schedule.json';
-    const config = loadConfig(configPath);
+    const examplePath = process.env.WA_SCHEDULE_EXAMPLE || 'schedule.example.json';
     const activity = new ActivityLog(process.env.WA_ACTIVITY_FILE);
+    const scheduleCreated = ensureLocalConfig(configPath, examplePath);
+    const config = loadConfig(configPath);
+
+    if (scheduleCreated) {
+        activity.info('config.schedule.created', {
+            message: `Local schedule created from ${examplePath}`
+        });
+    }
     const stateStore = new StateStore(process.env.WA_STATE_FILE);
     const client = createWhatsAppClient(activity);
     const schedulerManager = new SchedulerManager(client, stateStore, activity);

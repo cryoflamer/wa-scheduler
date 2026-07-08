@@ -122,3 +122,44 @@ test('activity SSE streams new events and clear notifications', async (t) => {
         console.log = originalLog;
     }
 });
+
+test('the last local job can be deleted', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-delete-last-job-'));
+    const configPath = path.join(directory, 'schedule.json');
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        jobs: [{
+            id: 'report',
+            schedule: '0 8 * * 1',
+            recipient: '380661234567',
+            message: 'Report'
+        }]
+    }));
+
+    const schedulerManager = {
+        config: loadConfig(configPath),
+        apply(config) { this.config = config; }
+    };
+    const app = createWebServer({
+        client: {},
+        stateStore: {},
+        schedulerManager,
+        configPath,
+        status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs/report`, {
+        method: 'DELETE'
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(loadConfig(configPath, {}).jobs, []);
+    assert.deepEqual(schedulerManager.config.jobs, []);
+});

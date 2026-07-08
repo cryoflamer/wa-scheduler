@@ -277,9 +277,6 @@ function createWebServer(options) {
         try {
             const raw = loadRawConfig(configPath);
             raw.jobs = raw.jobs.filter((job) => job.id !== request.params.id);
-            if (raw.jobs.length === 0) {
-                throw new Error('At least one job must remain');
-            }
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
             schedulerManager.apply(normalized);

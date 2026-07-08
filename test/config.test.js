@@ -191,3 +191,29 @@ test('job enabled flag must be boolean', () => {
         assert.throws(() => loadConfig(configPath, {}), /jobs\[0\]\.enabled must be a boolean/);
     });
 });
+
+test('local schedule is created from the example when missing', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-scheduler-bootstrap-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const examplePath = path.join(directory, 'schedule.example.json');
+    const { ensureLocalConfig } = require('../src/config');
+    const example = { timezone: 'Europe/Kyiv', jobs: [] };
+
+    try {
+        fs.writeFileSync(examplePath, `${JSON.stringify(example)}\n`);
+        assert.equal(ensureLocalConfig(configPath, examplePath), true);
+        assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), example);
+        assert.equal(ensureLocalConfig(configPath, examplePath), false);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('empty jobs array is a valid local schedule', () => {
+    withConfig({ timezone: 'Europe/Kyiv', jobs: [] }, (configPath) => {
+        assert.deepEqual(loadConfig(configPath, {}), {
+            timezone: 'Europe/Kyiv',
+            jobs: []
+        });
+    });
+});

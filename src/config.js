@@ -128,6 +128,25 @@ function validateJob(job, index, environment) {
     };
 }
 
+function ensureLocalConfig(configPath = 'schedule.json', examplePath = 'schedule.example.json') {
+    const resolvedPath = path.resolve(configPath);
+
+    if (fs.existsSync(resolvedPath)) {
+        return false;
+    }
+
+    const resolvedExamplePath = path.resolve(examplePath);
+    if (!fs.existsSync(resolvedExamplePath)) {
+        throw new Error(
+            `Schedule configuration does not exist and no example is available: ${resolvedPath}`
+        );
+    }
+
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    fs.copyFileSync(resolvedExamplePath, resolvedPath, fs.constants.COPYFILE_EXCL);
+    return true;
+}
+
 function loadRawConfig(configPath = 'schedule.json') {
     const resolvedPath = path.resolve(configPath);
 
@@ -147,8 +166,8 @@ function loadRawConfig(configPath = 'schedule.json') {
 function normalizeConfig(parsed, environment = process.env) {
     const timezone = requireExpandedString(parsed.timezone, 'timezone', environment);
 
-    if (!Array.isArray(parsed.jobs) || parsed.jobs.length === 0) {
-        throw new Error('jobs must be a non-empty array');
+    if (!Array.isArray(parsed.jobs)) {
+        throw new Error('jobs must be an array');
     }
 
     const jobs = parsed.jobs.map((job, index) => validateJob(job, index, environment));
@@ -177,6 +196,7 @@ function saveRawConfig(config, configPath = 'schedule.json') {
 }
 
 module.exports = {
+    ensureLocalConfig,
     expandEnvironment,
     loadConfig,
     loadRawConfig,

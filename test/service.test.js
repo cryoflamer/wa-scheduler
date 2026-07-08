@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { buildUnit, installService, removeService } = require('../src/service');
+const { buildUnit, installService, removeService, serviceStatus } = require('../src/service');
 
 test('systemd unit uses the active Node executable and project root', () => {
     const unit = buildUnit({ projectRoot: '/home/alex/wa-scheduler', nodePath: '/home/alex/.nvm/node' });
@@ -38,4 +38,19 @@ test('service install and remove manage the generated user unit', () => {
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
+});
+
+
+test('service status accepts the normal inactive systemd exit code', () => {
+    let receivedOptions;
+    const output = serviceStatus({
+        runSystemctl: (args, options) => {
+            assert.deepEqual(args, ['status', 'wa-scheduler.service', '--no-pager']);
+            receivedOptions = options;
+            return 'Active: inactive (dead)';
+        }
+    });
+
+    assert.deepEqual(receivedOptions, { acceptedStatuses: [0, 3] });
+    assert.equal(output, 'Active: inactive (dead)');
 });

@@ -19,11 +19,11 @@ cp .env.example .env
 
 Edit `.env` and set the real WhatsApp recipient numbers. `.env` is ignored by Git, so personal phone numbers stay local.
 
-Place documents under `documents/`. Document contents, scheduler state, WhatsApp authentication data, and `.env` are ignored by Git.
+Place documents under `documents/`. Document contents, scheduler state, WhatsApp authentication data, `.env`, and the local `schedule.json` are ignored by Git.
 
 ## Schedule configuration
 
-The schedule itself is version-controlled in `schedule.json`:
+The repository tracks `schedule.example.json`. On the first start, wa-scheduler copies it to the ignored local `schedule.json`, and the UI edits only that local schedule:
 
 ```json
 {
@@ -53,6 +53,8 @@ WA_RECIPIENT_SELF=380XXXXXXXXX
 ```
 
 `${VARIABLE}` placeholders can be used in string values in the schedule, including messages, file paths, and file captions. Startup fails with a clear error when a referenced environment variable is missing.
+
+Deleting the local `schedule.json` resets the operational schedule on the next start by recreating it from `schedule.example.json`. An empty `jobs` array is valid, so a fresh local schedule can be configured entirely from the dashboard. Set `WA_SCHEDULE_CONFIG` or `WA_SCHEDULE_EXAMPLE` to override either path.
 
 Each job id must be unique. `schedule` uses cron syntax and is evaluated in the configured timezone. A job can contain a `message`, a `files` array, or both. Files can be written as a path string or as an object with `path` and an optional `caption`.
 
@@ -100,7 +102,7 @@ http://127.0.0.1:3000
 
 The UI shows WhatsApp connection status and scheduled jobs. Jobs can be created, edited, deleted, or sent immediately. The schedule editor provides daily, weekly, and monthly forms with an advanced cron fallback.
 
-Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the version-controlled schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked.
+Recipients are managed by friendly aliases in the UI. Their real WhatsApp numbers remain in the ignored local `.env`; the local schedule stores placeholders such as `${WA_RECIPIENT_OFFICE}`. Numbers returned by the UI API are masked.
 
 Files selected in the job editor are copied into `documents/` and schedule entries use repository-relative document paths. Per-file captions remain supported.
 
@@ -112,7 +114,7 @@ The UI binds to `127.0.0.1` by default. `WA_UI_HOST` and `WA_UI_PORT` can overri
 
 ## Operational status and job controls
 
-Jobs are enabled by default. Set `"enabled": false` in `schedule.json`, or use the dashboard **Enable / Disable** button, to pause a job without deleting it. Disabled jobs are kept in the configuration but are not registered with the scheduler.
+Jobs are enabled by default. Set `"enabled": false` in the local `schedule.json`, or use the dashboard **Enable / Disable** button, to pause a job without deleting it. Disabled jobs are kept in the configuration but are not registered with the scheduler.
 
 Each job card shows its next scheduled run and the latest scheduled run status. A failed run that already sent some items is shown as partial, including the number of completed items. Manual **Send now** executions remain separate from scheduled-run history.
 
