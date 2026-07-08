@@ -20,6 +20,46 @@ const { runJob } = require('../scheduler');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 
+function decodeMultipartFilename(filename) {
+    const value = String(filename || '');
+
+    if ([...value].some((character) => character.codePointAt(0) > 0xFF)) {
+        return value;
+    }
+
+    const decoded = Buffer.from(value, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? value : decoded;
+}
+
+function sanitizeUploadFilename(filename) {
+    const decoded = decodeMultipartFilename(filename).normalize('NFC');
+    const basename = path.posix.basename(decoded.replace(/\\/g, '/'));
+    const sanitized = basename
+        .replace(/[\u0000-\u001F\u007F]/g, '')
+        .trim();
+
+    if (!sanitized || sanitized === '.' || sanitized === '..') {
+        return 'document';
+    }
+
+    return sanitized;
+}
+
+function uniqueUploadFilename(directory, filename) {
+    const original = sanitizeUploadFilename(filename);
+    const extension = path.extname(original);
+    const base = path.basename(original, extension) || 'document';
+    let candidate = `${base}${extension}`;
+    let suffix = 2;
+
+    while (fs.existsSync(path.join(directory, candidate))) {
+        candidate = `${base}-${suffix}${extension}`;
+        suffix += 1;
+    }
+
+    return candidate;
+}
+
 function createUpload() {
     const directory = path.resolve('documents');
     fs.mkdirSync(directory, { recursive: true });
@@ -28,18 +68,7 @@ function createUpload() {
         storage: multer.diskStorage({
             destination: directory,
             filename: (_request, file, callback) => {
-                const original = path.basename(file.originalname).replace(/[^A-Za-z0-9._ -]/g, '_');
-                const extension = path.extname(original);
-                const base = path.basename(original, extension) || 'document';
-                let candidate = `${base}${extension}`;
-                let suffix = 2;
-
-                while (fs.existsSync(path.join(directory, candidate))) {
-                    candidate = `${base}-${suffix}${extension}`;
-                    suffix += 1;
-                }
-
-                callback(null, candidate);
+                callback(null, uniqueUploadFilename(directory, file.originalname));
             }
         }),
         limits: { fileSize: 100 * 1024 * 1024 }
@@ -244,4 +273,10 @@ function createWebServer(options) {
     return app;
 }
 
-module.exports = { createWebServer, recipientKey, serializeJob };
+module.exports = {
+    createWebServer,
+    recipientKey,
+    sanitizeUploadFilename,
+    serializeJob,
+    uniqueUploadFilename
+};

@@ -53,6 +53,8 @@ async function sendDocument(client, recipientOrJob, file) {
     }
 
     const media = MessageMedia.fromFilePath(filePath);
+    media.filename = path.basename(filePath);
+    media.filesize = fs.statSync(filePath).size;
 
     await client.sendMessage(chatIdFor(recipient), media, {
         sendMediaAsDocument: true,
