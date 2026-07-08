@@ -157,6 +157,14 @@ function createWebServer(options) {
     } = options;
     const app = express();
     const upload = createUpload();
+    const streams = new Set();
+
+    app.closeStreams = () => {
+        for (const response of streams) {
+            response.end();
+        }
+        streams.clear();
+    };
 
     app.use(express.json({ limit: '1mb' }));
     app.use(express.static(path.resolve('public')));
@@ -179,6 +187,7 @@ function createWebServer(options) {
         response.setHeader('Cache-Control', 'no-cache');
         response.setHeader('Connection', 'keep-alive');
         response.flushHeaders?.();
+        streams.add(response);
 
         const send = (event) => response.write(`data: ${JSON.stringify(event)}\n\n`);
         const sendClear = () => response.write('event: clear\ndata: {}\n\n');
@@ -187,6 +196,7 @@ function createWebServer(options) {
         const keepAlive = setInterval(() => response.write(': keep-alive\n\n'), 25000);
 
         request.on('close', () => {
+            streams.delete(response);
             clearInterval(keepAlive);
             unsubscribe();
             unsubscribeClear();

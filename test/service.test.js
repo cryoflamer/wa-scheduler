@@ -10,6 +10,8 @@ test('systemd unit uses the active Node executable and project root', () => {
     assert.match(unit, /WorkingDirectory=\/home\/alex\/wa-scheduler/);
     assert.match(unit, /ExecStart=\/home\/alex\/\.nvm\/node \/home\/alex\/wa-scheduler\/index\.js/);
     assert.match(unit, /Restart=on-failure/);
+    assert.match(unit, /KillSignal=SIGTERM/);
+    assert.match(unit, /TimeoutStopSec=20/);
 });
 
 test('service install and remove manage the generated user unit', () => {

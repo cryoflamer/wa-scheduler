@@ -4,6 +4,7 @@ const { ActivityLog } = require('./src/activity');
 const { loadConfig } = require('./src/config');
 const { SchedulerManager } = require('./src/scheduler');
 const { StateStore } = require('./src/state');
+const { createShutdownHandler } = require('./src/runtime');
 const { createWhatsAppClient } = require('./src/whatsapp');
 const { createWebServer } = require('./src/web/server');
 
@@ -41,8 +42,22 @@ async function main() {
         activity
     });
 
-    app.listen(port, host, () => {
+    const server = app.listen(port, host, () => {
         activity.info('ui.ready', { message: `UI available at http://${host}:${port}` });
+    });
+    const shutdown = createShutdownHandler({
+        schedulerManager,
+        app,
+        server,
+        client,
+        activity
+    });
+
+    process.once('SIGTERM', () => {
+        void shutdown('SIGTERM');
+    });
+    process.once('SIGINT', () => {
+        void shutdown('SIGINT');
     });
 
     await client.initialize();

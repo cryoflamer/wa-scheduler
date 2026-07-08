@@ -10,7 +10,7 @@ function servicePath(home = os.homedir()) {
 }
 
 function buildUnit({ projectRoot = path.resolve('.'), nodePath = process.execPath } = {}) {
-    return `[Unit]\nDescription=wa-scheduler WhatsApp scheduler\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${projectRoot}\nExecStart=${nodePath} ${path.join(projectRoot, 'index.js')}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n`;
+    return `[Unit]\nDescription=wa-scheduler WhatsApp scheduler\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${projectRoot}\nExecStart=${nodePath} ${path.join(projectRoot, 'index.js')}\nRestart=on-failure\nRestartSec=5\nKillSignal=SIGTERM\nTimeoutStopSec=20\n\n[Install]\nWantedBy=default.target\n`;
 }
 
 function runSystemctl(args, options = {}) {
