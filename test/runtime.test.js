@@ -78,3 +78,44 @@ test('shutdown handler reports timeout failures and exits non-zero', async () =>
     assert.deepEqual(events, ['runtime.stopping', 'runtime.shutdown.failed']);
     assert.deepEqual(exits, [1]);
 });
+
+test('shutdown handler preserves a requested non-zero recovery exit code', async () => {
+    const exits = [];
+    const shutdown = createShutdownHandler({
+        schedulerManager: { stop: () => {} },
+        app: { closeStreams: () => {} },
+        server: { close: (callback) => callback() },
+        client: { destroy: async () => {} },
+        exit: (code) => exits.push(code)
+    });
+
+    assert.equal(await shutdown('WhatsApp disconnected', 1), 1);
+    assert.deepEqual(exits, [1]);
+});
+
+test('WhatsApp disconnect requests a persistent alert before non-zero recovery shutdown', async () => {
+    const { createWhatsAppDisconnectHandler } = require('../src/runtime');
+    const status = { whatsapp: 'ready' };
+    const calls = [];
+    const handler = createWhatsAppDisconnectHandler({
+        status,
+        notificationManager: {
+            async notify(type, context) {
+                calls.push(['notify', type, context.idempotencyKey]);
+            }
+        },
+        shutdown: async (signal, code) => {
+            calls.push(['shutdown', signal, code]);
+            return code;
+        },
+        randomUUID: () => 'disconnect-id',
+        withTimeoutFn: async (promise) => promise
+    });
+
+    assert.equal(await handler(), 1);
+    assert.equal(status.whatsapp, 'disconnected');
+    assert.deepEqual(calls, [
+        ['notify', 'whatsapp.disconnected', 'system:whatsapp.disconnected:disconnect-id'],
+        ['shutdown', 'WhatsApp disconnected', 1]
+    ]);
+});

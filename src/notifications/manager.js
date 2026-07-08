@@ -158,7 +158,7 @@ Sending the delayed run now.`
             title: 'WhatsApp disconnected',
             priority: 'urgent',
             tags: ['rotating_light'],
-            message: '❌ WhatsApp disconnected\n\nwa-scheduler cannot send scheduled jobs until the session is ready again.'
+            message: '❌ WhatsApp disconnected\n\nwa-scheduler is restarting to recover the WhatsApp session. Pending scheduled work remains preserved.'
         };
     }
     if (type === 'notification.test') {
@@ -197,7 +197,6 @@ class NotificationManager {
             whatsapp: { enabled: false, events: [], includeMessage: false },
             ntfy: { enabled: false, events: [], includeMessage: false }
         };
-        this.systemNotifications = new Set();
         this.retryDelayMs = retryDelayMs;
         this.retryIntervalMs = retryIntervalMs;
         this.setIntervalFn = setIntervalFn;
@@ -209,6 +208,14 @@ class NotificationManager {
 
     apply(config = {}) {
         this.config = config;
+        this.stateStore.cancelPendingNotifications?.(
+            ({ eventType, provider }) => {
+                const providerConfig = this.config[provider];
+                return !providerConfig?.enabled || !providerConfig.events.includes(eventType);
+            },
+            this.now().toISOString(),
+            'notification provider or event disabled'
+        );
     }
 
     start() {
@@ -227,6 +234,7 @@ class NotificationManager {
 
     async notify(type, context = {}) {
         const results = [];
+        const deliveries = [];
 
         for (const [providerName, provider] of Object.entries(this.providers)) {
             const providerConfig = this.config[providerName];
@@ -243,14 +251,14 @@ class NotificationManager {
                 environment: this.environment
             });
 
-            if (key && !key.startsWith('system:')) {
+            if (key) {
                 this.stateStore.queueNotification(key, type, providerName, {
                     notification,
                     jobId: context.job?.id || null
                 }, this.now().toISOString());
             }
 
-            results.push(await this.deliver({
+            deliveries.push({
                 key,
                 type,
                 providerName,
@@ -259,9 +267,10 @@ class NotificationManager {
                 notification,
                 jobId: context.job?.id || null,
                 attempts: 0
-            }));
+            });
         }
 
+        results.push(...await Promise.all(deliveries.map((delivery) => this.deliver(delivery))));
         return results;
     }
 
@@ -306,7 +315,7 @@ class NotificationManager {
             });
             return { provider: providerName, status: 'sent' };
         } catch (error) {
-            if (key && !key.startsWith('system:')) {
+            if (key) {
                 const failedAt = this.now().toISOString();
                 const backoffMultiplier = this.retryDelayMs === 0
                     ? 0
@@ -365,15 +374,10 @@ class NotificationManager {
     }
 
     wasSent(key, type, provider) {
-        if (key.startsWith('system:')) return this.systemNotifications.has(`${key}:${type}:${provider}`);
         return this.stateStore.isNotificationSent(key, type, provider);
     }
 
     markSent(key, type, provider) {
-        if (key.startsWith('system:')) {
-            this.systemNotifications.add(`${key}:${type}:${provider}`);
-            return;
-        }
         this.stateStore.markNotificationSent(key, type, provider, this.now().toISOString());
     }
 }

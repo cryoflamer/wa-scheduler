@@ -167,7 +167,7 @@ Notification settings are saved automatically. Checkbox and recipient changes ar
 
 For an independent phone push channel, enable the `ntfy` provider in the dashboard. The server defaults to `https://ntfy.sh`; the topic is stored locally as `WA_NTFY_TOPIC` in `.env` and is only exposed to the UI in masked form. Install an ntfy client on the phone and subscribe to the exact same topic before testing. The ntfy card can explicitly send the real server and topic to a selected WhatsApp recipient so the topic can be copied on the phone without revealing it in the normal dashboard or Activity log. **Send test** automatically enables the selected provider, flushes any pending autosave, and publishes a test message. A successful ntfy test confirms that the ntfy server accepted the publication; each test has a unique test id and the dashboard reports the ntfy message id returned by the server. Phone delivery still requires an active subscription to that exact topic.
 
-The ntfy provider can report WhatsApp disconnections, which is useful because a disconnected WhatsApp session cannot reliably report its own failure through WhatsApp. Job notification messages never include file captions, full phone numbers, or ntfy topics. Job message bodies remain omitted unless **Include message body** is enabled for that notification provider.
+The ntfy provider can report WhatsApp disconnections, which is useful because a disconnected WhatsApp session cannot reliably report its own failure through WhatsApp. A real WhatsApp disconnect is treated as a recoverable process failure: wa-scheduler persists the disconnect notification intent, gives enabled providers a brief delivery chance, then exits non-zero so the systemd user service can restart the process and reuse the LocalAuth session. Pending notification intents survive that restart and resume from the outbox after WhatsApp becomes ready. Job notification messages never include file captions, full phone numbers, or ntfy topics. Job message bodies remain omitted unless **Include message body** is enabled for that notification provider.
 
 ## Automatic retries
 
@@ -188,7 +188,7 @@ Retries use the immutable scheduled-run snapshot and the existing item-level sen
 
 ## State retention
 
-Completed and failed run records in `data/state.json` are pruned on startup after 90 days by default. Running jobs, pending scheduled retries, and records with pending notification deliveries are never pruned. Override the retention window with:
+Completed, failed, and cancelled run records in `data/state.json` are pruned on startup after 90 days by default. Running jobs, pending scheduled retries, and records with pending notification deliveries are never pruned. Deleting a job cancels its pending retry before removing the job; an actively running job cannot be deleted. Disabling a notification provider or event cancels matching pending outbox deliveries so stale alerts cannot reappear if the channel is enabled again much later. Override the retention window with:
 
 ```dotenv
 WA_STATE_RETENTION_DAYS=90

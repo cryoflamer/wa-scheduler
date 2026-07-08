@@ -5,9 +5,10 @@ const { ensureLocalConfig, loadConfig } = require('./src/config');
 const { SchedulerManager } = require('./src/scheduler');
 const { NotificationManager } = require('./src/notifications/manager');
 const { StateStore } = require('./src/state');
-const { createShutdownHandler } = require('./src/runtime');
+const { createShutdownHandler, createWhatsAppDisconnectHandler } = require('./src/runtime');
 const { createWhatsAppClient } = require('./src/whatsapp');
 const { createWebServer } = require('./src/web/server');
+const crypto = require('crypto');
 
 async function main() {
     const configPath = process.env.WA_SCHEDULE_CONFIG || 'schedule.json';
@@ -34,16 +35,9 @@ async function main() {
         status.whatsapp = 'authenticated';
     });
 
-    let disconnectSequence = 0;
-    client.on('disconnected', () => {
-        status.whatsapp = 'disconnected';
-        disconnectSequence += 1;
-        void notificationManager.notify('whatsapp.disconnected', {
-            idempotencyKey: `system:whatsapp.disconnected:${disconnectSequence}`
-        });
-    });
+    let shutdown = null;
 
-    client.once('ready', () => {
+    client.on('ready', () => {
         status.whatsapp = 'ready';
         activity.info('whatsapp.ready', { message: 'WhatsApp ready' });
         schedulerManager.apply(config, { catchUpMissed: true });
@@ -63,7 +57,7 @@ async function main() {
     const server = app.listen(port, host, () => {
         activity.info('ui.ready', { message: `UI available at http://${host}:${port}` });
     });
-    const shutdown = createShutdownHandler({
+    shutdown = createShutdownHandler({
         schedulerManager,
         app,
         server,
@@ -71,6 +65,14 @@ async function main() {
         activity,
         notificationManager
     });
+
+    client.on('disconnected', createWhatsAppDisconnectHandler({
+        status,
+        notificationManager,
+        shutdown,
+        activity,
+        randomUUID: crypto.randomUUID
+    }));
 
     process.once('SIGTERM', () => {
         void shutdown('SIGTERM');

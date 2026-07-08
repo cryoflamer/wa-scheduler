@@ -6,6 +6,7 @@ const test = require('node:test');
 const { ActivityLog } = require('../src/activity');
 const { loadConfig } = require('../src/config');
 const { createWebServer } = require('../src/web/server');
+const { StateStore } = require('../src/state');
 
 test('local UI API returns jobs and masked recipients', async (t) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-api-'));
@@ -486,4 +487,93 @@ test('recipient deletion is blocked while WhatsApp notifications reference it', 
     assert.equal(deleted.status, 200);
     assert.doesNotMatch(fs.readFileSync(envPath, 'utf8'), /WA_RECIPIENT_OTHER=/);
     assert.equal(applyCalls, 1);
+});
+
+test('deleting a job cancels its pending retry and rejects deletion while active', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-delete-retry-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        jobs: [{ id: 'report', schedule: '0 8 * * 1', recipient: '380661234567', message: 'Report', retry: { attempts: 2, delayMinutes: 10 } }]
+    }));
+    const key = 'report:2026-07-13T08:00';
+    stateStore.captureRunSnapshot(key, loadConfig(configPath).jobs[0]);
+    stateStore.markRetryScheduled(key, 1, '2026-07-13T08:10:00.000Z');
+    let active = true;
+    const schedulerManager = {
+        config: loadConfig(configPath),
+        apply(config) { this.config = config; },
+        isJobActive() { return active; }
+    };
+    const app = createWebServer({
+        client: {}, stateStore, schedulerManager, configPath, status: { whatsapp: 'ready' }
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const blocked = await fetch(`http://127.0.0.1:${port}/api/jobs/report`, { method: 'DELETE' });
+    assert.equal(blocked.status, 400);
+    assert.equal(stateStore.state[key].status, 'retrying');
+
+    active = false;
+    const deleted = await fetch(`http://127.0.0.1:${port}/api/jobs/report`, { method: 'DELETE' });
+    assert.equal(deleted.status, 200);
+    assert.equal(stateStore.state[key].status, 'cancelled');
+    assert.deepEqual(stateStore.listPendingRetries(), []);
+    assert.deepEqual(loadConfig(configPath).jobs, []);
+});
+
+test('manual failure notifications use the immutable run snapshot after a concurrent job edit', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-manual-snapshot-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const original = {
+        timezone: 'Europe/Kyiv',
+        jobs: [{ id: 'report', schedule: '0 8 * * 1', recipient: '380661111111', message: 'Original message' }]
+    };
+    fs.writeFileSync(configPath, JSON.stringify(original));
+    let notificationContext = null;
+    const client = {
+        async sendMessage() {
+            fs.writeFileSync(configPath, JSON.stringify({
+                timezone: 'Europe/Kyiv',
+                jobs: [{ id: 'report', schedule: '0 8 * * 1', recipient: '380662222222', message: 'Edited message' }]
+            }));
+            throw new Error('send failed');
+        }
+    };
+    const schedulerManager = {
+        beginManualRun: () => true,
+        endManualRun: () => {},
+        apply: () => {}
+    };
+    const notificationManager = {
+        async notify(type, context) {
+            notificationContext = { type, context };
+        }
+    };
+    const app = createWebServer({
+        client, stateStore, schedulerManager, configPath,
+        status: { whatsapp: 'ready' }, notificationManager
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/jobs/report/send`, { method: 'POST' });
+    assert.equal(response.status, 400);
+    assert.equal(notificationContext.type, 'job.manual.failed');
+    assert.equal(notificationContext.context.job.recipient, '380661111111');
+    assert.equal(notificationContext.context.job.message, 'Original message');
+    assert.notEqual(notificationContext.context.job.message, loadConfig(configPath).jobs[0].message);
 });

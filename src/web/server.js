@@ -470,7 +470,18 @@ function createWebServer(options) {
     app.delete('/api/jobs/:id', (request, response) => {
         try {
             const raw = loadRawConfig(configPath);
-            raw.jobs = raw.jobs.filter((job) => job.id !== request.params.id);
+            const job = raw.jobs.find((candidate) => candidate.id === request.params.id);
+            if (!job) return response.status(404).json({ error: 'Job not found' });
+            if (schedulerManager?.isJobActive?.(job.id)) {
+                throw new Error('Job is currently running');
+            }
+
+            stateStore.cancelPendingRetriesForJob?.(
+                job.id,
+                new Date().toISOString(),
+                'job deleted'
+            );
+            raw.jobs = raw.jobs.filter((candidate) => candidate.id !== job.id);
             const normalized = normalizeConfig(raw, process.env);
             saveRawConfig(raw, configPath);
             applyConfig(normalized);
@@ -483,6 +494,7 @@ function createWebServer(options) {
     app.post('/api/jobs/:id/send', async (request, response) => {
         let key = null;
         let lockedJobId = null;
+        let runJobSnapshot = null;
         try {
             if (status.whatsapp !== 'ready') throw new Error('WhatsApp is not ready');
             const config = loadConfig(configPath, process.env);
@@ -493,11 +505,12 @@ function createWebServer(options) {
             }
             lockedJobId = job.id;
             key = `manual:${job.id}:${crypto.randomUUID()}`;
-            await runJob(client, job, stateStore, key, {}, activity);
+            runJobSnapshot = stateStore.captureRunSnapshot?.(key, job) || job;
+            await runJob(client, runJobSnapshot, stateStore, key, {}, activity);
             if (notificationManager) {
-                const progress = stateStore.getRunDetails(key, job);
+                const progress = stateStore.getRunDetails(key, runJobSnapshot);
                 await notificationManager.notify('job.manual.completed', {
-                    job,
+                    job: runJobSnapshot,
                     sentItems: progress.sentItems,
                     progress,
                     idempotencyKey: key
@@ -507,22 +520,18 @@ function createWebServer(options) {
         } catch (error) {
             if (key) {
                 stateStore.markRunFailed(key, new Date().toISOString());
-                if (notificationManager) {
-                    const config = loadConfig(configPath, process.env);
-                    const job = config.jobs.find((candidate) => candidate.id === request.params.id);
-                    if (job) {
-                        const progress = stateStore.getRunDetails(key, job);
-                        const type = progress.sentItems > 0 && progress.sentItems < progress.totalItems
-                            ? 'job.manual.partial'
-                            : 'job.manual.failed';
-                        await notificationManager.notify(type, {
-                            job,
+                if (notificationManager && runJobSnapshot) {
+                    const progress = stateStore.getRunDetails(key, runJobSnapshot);
+                    const type = progress.sentItems > 0 && progress.sentItems < progress.totalItems
+                        ? 'job.manual.partial'
+                        : 'job.manual.failed';
+                    await notificationManager.notify(type, {
+                            job: runJobSnapshot,
                             error,
                             sentItems: progress.sentItems,
                             progress,
                             idempotencyKey: key
                         });
-                    }
                 }
             }
             return sendJsonError(response, error, activity);

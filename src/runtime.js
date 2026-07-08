@@ -41,6 +41,38 @@ function withTimeout(promise, timeoutMs, message = 'Shutdown timed out') {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+
+function createWhatsAppDisconnectHandler({
+    status,
+    notificationManager,
+    shutdown,
+    activity = null,
+    randomUUID,
+    notificationTimeoutMs = 3000,
+    withTimeoutFn = withTimeout
+}) {
+    return function handleWhatsAppDisconnected() {
+        status.whatsapp = 'disconnected';
+        const idempotencyKey = `system:whatsapp.disconnected:${randomUUID()}`;
+        activity?.error('whatsapp.recovery.required', {
+            message: 'WhatsApp disconnected; restarting wa-scheduler for recovery'
+        });
+
+        return (async () => {
+            try {
+                await withTimeoutFn(
+                    notificationManager.notify('whatsapp.disconnected', { idempotencyKey }),
+                    notificationTimeoutMs,
+                    'Disconnect notification delivery timed out'
+                );
+            } catch (error) {
+                activity?.error('whatsapp.disconnect.notification.delayed', { error });
+            }
+            return shutdown('WhatsApp disconnected', 1);
+        })();
+    };
+}
+
 function createShutdownHandler(options) {
     const {
         schedulerManager,
@@ -54,14 +86,14 @@ function createShutdownHandler(options) {
     } = options;
     let shutdownPromise = null;
 
-    return function shutdown(signal) {
+    return function shutdown(signal, requestedExitCode = 0) {
         if (shutdownPromise) {
             return shutdownPromise;
         }
 
         shutdownPromise = (async () => {
             activity?.info('runtime.stopping', { message: `Stopping after ${signal}` });
-            let exitCode = 0;
+            let exitCode = requestedExitCode;
 
             try {
                 await withTimeout(
@@ -84,6 +116,7 @@ function createShutdownHandler(options) {
 }
 
 module.exports = {
+    createWhatsAppDisconnectHandler,
     closeHttpServer,
     createShutdownHandler,
     shutdownRuntime,

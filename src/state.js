@@ -104,6 +104,47 @@ class StateStore {
         this.persist();
     }
 
+    cancelPendingRetriesForJob(jobId, cancelledAt, reason = 'job deleted') {
+        let changed = false;
+        for (const [key, record] of Object.entries(this.state)) {
+            if (key.startsWith('manual:')) continue;
+            const recordJobId = record?.jobId || record?.snapshot?.id;
+            if (recordJobId !== jobId && !key.startsWith(`${jobId}:`)) continue;
+            if (record?.status !== 'retrying') continue;
+            record.status = 'cancelled';
+            record.cancelledAt = cancelledAt;
+            record.cancelReason = reason;
+            delete record.retry;
+            changed = true;
+        }
+        if (changed) this.persist();
+        return changed;
+    }
+
+    cancelPendingNotifications(predicate, cancelledAt, reason = 'notification disabled') {
+        let changed = false;
+        for (const record of Object.values(this.state)) {
+            const notifications = record?.notifications;
+            if (!notifications || typeof notifications !== 'object') continue;
+            for (const [eventType, providers] of Object.entries(notifications)) {
+                if (!providers || typeof providers !== 'object') continue;
+                for (const [provider, delivery] of Object.entries(providers)) {
+                    if (delivery?.status !== 'pending') continue;
+                    if (!predicate({ eventType, provider, delivery, record })) continue;
+                    delivery.status = 'cancelled';
+                    delivery.cancelledAt = cancelledAt;
+                    delivery.cancelReason = reason;
+                    delete delivery.notification;
+                    delete delivery.nextAttemptAt;
+                    delete delivery.lastError;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) this.persist();
+        return changed;
+    }
+
     listPendingRetries() {
         return Object.entries(this.state).flatMap(([key, record]) => {
             if (record?.status !== 'retrying' || !record.retry?.nextRetryAt) return [];
@@ -300,10 +341,10 @@ class StateStore {
     }
 
     recordTimestamp(record) {
-        const timestamps = [record?.sentAt, record?.failedAt, record?.startedAt];
+        const timestamps = [record?.sentAt, record?.failedAt, record?.startedAt, record?.cancelledAt];
         for (const providers of Object.values(record?.notifications || {})) {
             for (const delivery of Object.values(providers || {})) {
-                timestamps.push(delivery?.sentAt, delivery?.lastAttemptAt, delivery?.createdAt);
+                timestamps.push(delivery?.sentAt, delivery?.lastAttemptAt, delivery?.createdAt, delivery?.cancelledAt);
             }
         }
         const values = timestamps

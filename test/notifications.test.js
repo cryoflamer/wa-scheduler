@@ -395,3 +395,119 @@ test('missed-run notifications explain that a delayed occurrence is starting', (
     assert.match(notification.message, /Scheduled: 13 Jul 2026, 08:00/);
     assert.match(notification.message, /Sending the delayed run now/);
 });
+
+test('system notifications use the persistent outbox and survive manager restart', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-system-notification-outbox-'));
+    const statePath = path.join(directory, 'state.json');
+    let calls = 0;
+    const config = {
+        whatsapp: { enabled: false, recipient: '', events: [] },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: ['whatsapp.disconnected'] }
+    };
+
+    try {
+        const firstStore = new StateStore(statePath);
+        const first = new NotificationManager({
+            client: {}, stateStore: firstStore,
+            retryDelayMs: 0,
+            providers: {
+                whatsapp: async () => {},
+                ntfy: async () => { calls += 1; throw new Error('offline'); }
+            }
+        });
+        first.apply(config);
+        await first.notify('whatsapp.disconnected', {
+            idempotencyKey: 'system:whatsapp.disconnected:abc'
+        });
+        assert.equal(firstStore.listPendingNotifications().length, 1);
+
+        const secondStore = new StateStore(statePath);
+        const second = new NotificationManager({
+            client: {}, stateStore: secondStore,
+            retryDelayMs: 0,
+            providers: {
+                whatsapp: async () => {},
+                ntfy: async () => { calls += 1; }
+            }
+        });
+        second.apply(config);
+        await second.flushPending();
+
+        assert.equal(calls, 2);
+        assert.equal(secondStore.isNotificationSent(
+            'system:whatsapp.disconnected:abc', 'whatsapp.disconnected', 'ntfy'
+        ), true);
+        assert.deepEqual(secondStore.listPendingNotifications(), []);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('disabling a provider or event cancels matching pending outbox entries', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-cancel-disabled-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const manager = new NotificationManager({
+        client: {}, stateStore, retryDelayMs: 60_000,
+        providers: {
+            whatsapp: async () => {},
+            ntfy: async () => { throw new Error('offline'); }
+        }
+    });
+
+    try {
+        manager.apply({
+            whatsapp: { enabled: false, recipient: '', events: [] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: ['job.completed'] }
+        });
+        await manager.notify('job.completed', {
+            job: { id: 'report', recipient: '380661234567', message: 'Report', files: [] },
+            idempotencyKey: 'report:2026-07-13T08:00'
+        });
+        assert.equal(stateStore.listPendingNotifications('9999-12-31T00:00:00.000Z').length, 1);
+
+        manager.apply({
+            whatsapp: { enabled: false, recipient: '', events: [] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: [] }
+        });
+        assert.deepEqual(stateStore.listPendingNotifications('9999-12-31T00:00:00.000Z'), []);
+        assert.equal(
+            stateStore.state['report:2026-07-13T08:00'].notifications['job.completed'].ntfy.status,
+            'cancelled'
+        );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('notification intents are persisted for every provider before delivery waits', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-prequeue-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    let releaseWhatsapp;
+    const whatsappGate = new Promise((resolve) => { releaseWhatsapp = resolve; });
+    const manager = new NotificationManager({
+        client: {}, stateStore,
+        providers: {
+            whatsapp: async () => whatsappGate,
+            ntfy: async () => { throw new Error('offline'); }
+        }
+    });
+    manager.apply({
+        whatsapp: { enabled: true, recipient: '380660000000', events: ['whatsapp.disconnected'] },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: ['whatsapp.disconnected'] }
+    });
+
+    try {
+        const pendingNotify = manager.notify('whatsapp.disconnected', {
+            idempotencyKey: 'system:whatsapp.disconnected:prequeue'
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const queued = stateStore.listPendingNotifications('9999-12-31T00:00:00.000Z');
+        assert.deepEqual(queued.map((entry) => entry.provider).sort(), ['ntfy', 'whatsapp']);
+
+        releaseWhatsapp();
+        await pendingNotify;
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

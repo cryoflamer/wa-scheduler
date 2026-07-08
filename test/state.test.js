@@ -223,3 +223,37 @@ test('state retention defaults to 90 days and rejects invalid values', () => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('deleting a job can cancel pending retries without deleting run history', () => {
+    withStore((store) => {
+        const key = 'report:2026-07-13T08:00';
+        const job = { id: 'report', recipient: '380660000001', message: 'Old report', files: [], retry: { attempts: 3, delayMinutes: 10 } };
+        store.captureRunSnapshot(key, job);
+        store.markRetryScheduled(key, 1, '2026-07-13T08:10:00.000Z');
+
+        assert.equal(store.cancelPendingRetriesForJob('report', '2026-07-13T08:05:00.000Z', 'job deleted'), true);
+        assert.deepEqual(store.listPendingRetries(), []);
+        assert.equal(store.state[key].status, 'cancelled');
+        assert.equal(store.state[key].cancelReason, 'job deleted');
+        assert.equal(store.state[key].retry, undefined);
+        assert.equal(store.getRunSnapshot(key).message, 'Old report');
+    });
+});
+
+test('pending notifications can be cancelled when a provider or event is disabled', () => {
+    withStore((store) => {
+        store.queueNotification('report:2026-07-13T08:00', 'job.completed', 'ntfy', {
+            notification: { title: 'title', message: 'message' }, jobId: 'report'
+        }, '2026-07-13T08:00:00.000Z');
+
+        assert.equal(store.cancelPendingNotifications(
+            ({ provider }) => provider === 'ntfy',
+            '2026-07-13T08:01:00.000Z',
+            'notification provider or event disabled'
+        ), true);
+        assert.deepEqual(store.listPendingNotifications('2026-07-14T00:00:00.000Z'), []);
+        const delivery = store.state['report:2026-07-13T08:00'].notifications['job.completed'].ntfy;
+        assert.equal(delivery.status, 'cancelled');
+        assert.equal(delivery.notification, undefined);
+    });
+});
