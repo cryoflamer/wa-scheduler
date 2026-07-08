@@ -281,3 +281,100 @@ test('retry notifications explain scheduled retry, recovery, and exhaustion', ()
     assert.match(recovered.message, /Completed on retry 2 of 5/);
     assert.match(exhausted.message, /Automatic retries exhausted: 5 of 5/);
 });
+
+test('failed notification deliveries persist and resume from the outbox after restart', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-outbox-'));
+    const statePath = path.join(directory, 'state.json');
+    const runKey = 'report:2026-07-08T08:00';
+    const config = {
+        whatsapp: { enabled: true, recipient: '380660000000', events: ['job.completed'] },
+        ntfy: { enabled: false, server: 'https://ntfy.sh', topic: '', events: [] }
+    };
+    const context = {
+        job: { id: 'report', recipient: '380661234567', message: 'Report', files: [] },
+        idempotencyKey: runKey
+    };
+
+    try {
+        let failedCalls = 0;
+        const firstStore = new StateStore(statePath);
+        const firstManager = new NotificationManager({
+            client: {},
+            stateStore: firstStore,
+            retryDelayMs: 0,
+            providers: {
+                whatsapp: async () => { failedCalls += 1; throw new Error('offline'); },
+                ntfy: async () => {}
+            }
+        });
+        firstManager.apply(config);
+
+        const firstResult = await firstManager.notify('job.completed', context);
+        assert.equal(firstResult[0].status, 'failed');
+        assert.equal(failedCalls, 1);
+        assert.equal(firstStore.listPendingNotifications('9999-12-31T23:59:59.999Z').length, 1);
+
+        let recoveredCalls = 0;
+        const restartedStore = new StateStore(statePath);
+        const restartedManager = new NotificationManager({
+            client: {},
+            stateStore: restartedStore,
+            retryDelayMs: 0,
+            providers: {
+                whatsapp: async (_client, _providerConfig, notification) => {
+                    recoveredCalls += 1;
+                    assert.match(notification.message, /report completed/);
+                },
+                ntfy: async () => {}
+            }
+        });
+        restartedManager.apply(config);
+
+        const resumed = await restartedManager.flushPending();
+        assert.equal(resumed[0].status, 'sent');
+        assert.equal(recoveredCalls, 1);
+        assert.equal(restartedStore.isNotificationSent(runKey, 'job.completed', 'whatsapp'), true);
+        assert.equal(restartedStore.listPendingNotifications('9999-12-31T23:59:59.999Z').length, 0);
+        assert.equal(restartedStore.state[runKey].notifications['job.completed'].whatsapp.notification, undefined);
+
+        await restartedManager.flushPending();
+        assert.equal(recoveredCalls, 1);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('outbox retries only providers that are still pending', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-provider-outbox-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    let whatsappCalls = 0;
+    let ntfyCalls = 0;
+    const manager = new NotificationManager({
+        client: {},
+        stateStore,
+        retryDelayMs: 0,
+        providers: {
+            whatsapp: async () => { whatsappCalls += 1; },
+            ntfy: async () => { ntfyCalls += 1; if (ntfyCalls === 1) throw new Error('offline'); }
+        }
+    });
+    manager.apply({
+        whatsapp: { enabled: true, recipient: '380660000000', events: ['job.completed'] },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: ['job.completed'] }
+    });
+
+    try {
+        await manager.notify('job.completed', {
+            job: { id: 'report', recipient: '380661234567', message: 'Report', files: [] },
+            idempotencyKey: 'report:2026-07-08T08:00'
+        });
+        assert.equal(whatsappCalls, 1);
+        assert.equal(ntfyCalls, 1);
+
+        await manager.flushPending();
+        assert.equal(whatsappCalls, 1);
+        assert.equal(ntfyCalls, 2);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

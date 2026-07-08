@@ -47,6 +47,7 @@ async function main() {
         status.whatsapp = 'ready';
         activity.info('whatsapp.ready', { message: 'WhatsApp ready' });
         schedulerManager.apply(config);
+        notificationManager.start();
     });
 
     const app = createWebServer({

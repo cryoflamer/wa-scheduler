@@ -158,7 +158,18 @@ function buildNotification(type, context = {}, options = {}) {
 }
 
 class NotificationManager {
-    constructor({ client, stateStore, activity = null, providers = {}, environment = process.env }) {
+    constructor({
+        client,
+        stateStore,
+        activity = null,
+        providers = {},
+        environment = process.env,
+        retryDelayMs = 60_000,
+        retryIntervalMs = 30_000,
+        setIntervalFn = setInterval,
+        clearIntervalFn = clearInterval,
+        now = () => new Date()
+    }) {
         this.client = client;
         this.stateStore = stateStore;
         this.activity = activity;
@@ -172,10 +183,31 @@ class NotificationManager {
             ntfy: { enabled: false, events: [], includeMessage: false }
         };
         this.systemNotifications = new Set();
+        this.retryDelayMs = retryDelayMs;
+        this.retryIntervalMs = retryIntervalMs;
+        this.setIntervalFn = setIntervalFn;
+        this.clearIntervalFn = clearIntervalFn;
+        this.now = now;
+        this.outboxTimer = null;
+        this.activeDeliveries = new Set();
     }
 
     apply(config = {}) {
         this.config = config;
+    }
+
+    start() {
+        if (this.outboxTimer) return;
+        this.outboxTimer = this.setIntervalFn(() => {
+            void this.flushPending();
+        }, this.retryIntervalMs);
+        this.outboxTimer?.unref?.();
+        void this.flushPending();
+    }
+
+    stop() {
+        if (this.outboxTimer) this.clearIntervalFn(this.outboxTimer);
+        this.outboxTimer = null;
     }
 
     async notify(type, context = {}) {
@@ -191,30 +223,100 @@ class NotificationManager {
                 continue;
             }
 
-            try {
-                const notification = buildNotification(type, context, {
-                    includeMessage: providerConfig.includeMessage === true,
-                    environment: this.environment
-                });
-                await provider(this.client, providerConfig, notification);
-                if (key) this.markSent(key, type, providerName);
-                this.activity?.sent('notification.sent', {
-                    jobId: context.job?.id,
-                    message: `${providerName} notification sent`,
-                    details: { provider: providerName, event: type }
-                });
-                results.push({ provider: providerName, status: 'sent' });
-            } catch (error) {
-                this.activity?.error('notification.failed', {
-                    jobId: context.job?.id,
-                    message: `${providerName} notification failed`,
-                    details: { provider: providerName, event: type }
-                });
-                results.push({ provider: providerName, status: 'failed', error });
+            const notification = buildNotification(type, context, {
+                includeMessage: providerConfig.includeMessage === true,
+                environment: this.environment
+            });
+
+            if (key && !key.startsWith('system:')) {
+                this.stateStore.queueNotification(key, type, providerName, {
+                    notification,
+                    jobId: context.job?.id || null
+                }, this.now().toISOString());
             }
+
+            results.push(await this.deliver({
+                key,
+                type,
+                providerName,
+                provider,
+                providerConfig,
+                notification,
+                jobId: context.job?.id || null,
+                attempts: 0
+            }));
         }
 
         return results;
+    }
+
+    async flushPending() {
+        const entries = this.stateStore.listPendingNotifications?.(this.now().toISOString()) || [];
+        const results = [];
+        for (const entry of entries) {
+            const provider = this.providers[entry.provider];
+            const providerConfig = this.config[entry.provider];
+            if (!provider || !providerConfig?.enabled || !providerConfig.events.includes(entry.eventType)) continue;
+            results.push(await this.deliver({
+                key: entry.key,
+                type: entry.eventType,
+                providerName: entry.provider,
+                provider,
+                providerConfig,
+                notification: entry.notification,
+                jobId: entry.jobId,
+                attempts: entry.attempts
+            }));
+        }
+        return results;
+    }
+
+    async deliver({ key, type, providerName, provider, providerConfig, notification, jobId, attempts = 0 }) {
+        const deliveryKey = key ? `${key}:${type}:${providerName}` : null;
+        if (deliveryKey && this.activeDeliveries.has(deliveryKey)) {
+            return { provider: providerName, status: 'skipped' };
+        }
+        if (key && this.wasSent(key, type, providerName)) {
+            return { provider: providerName, status: 'skipped' };
+        }
+
+        if (deliveryKey) this.activeDeliveries.add(deliveryKey);
+        try {
+            await provider(this.client, providerConfig, notification);
+            if (key) this.markSent(key, type, providerName);
+            this.activity?.sent('notification.sent', {
+                jobId,
+                message: `${providerName} notification sent`,
+                details: { provider: providerName, event: type }
+            });
+            return { provider: providerName, status: 'sent' };
+        } catch (error) {
+            if (key && !key.startsWith('system:')) {
+                const failedAt = this.now().toISOString();
+                const backoffMultiplier = this.retryDelayMs === 0
+                    ? 0
+                    : Math.min(2 ** Math.min(attempts, 6), 60);
+                const nextAttemptAt = new Date(
+                    this.now().getTime() + this.retryDelayMs * backoffMultiplier
+                ).toISOString();
+                this.stateStore.markNotificationFailed(
+                    key,
+                    type,
+                    providerName,
+                    failedAt,
+                    nextAttemptAt,
+                    safeErrorMessage(error)
+                );
+            }
+            this.activity?.error('notification.failed', {
+                jobId,
+                message: `${providerName} notification failed`,
+                details: { provider: providerName, event: type }
+            });
+            return { provider: providerName, status: 'failed', error };
+        } finally {
+            if (deliveryKey) this.activeDeliveries.delete(deliveryKey);
+        }
     }
 
     async test(providerName) {
@@ -257,10 +359,9 @@ class NotificationManager {
             this.systemNotifications.add(`${key}:${type}:${provider}`);
             return;
         }
-        this.stateStore.markNotificationSent(key, type, provider, new Date().toISOString());
+        this.stateStore.markNotificationSent(key, type, provider, this.now().toISOString());
     }
 }
-
 module.exports = {
     NotificationManager,
     buildNotification,

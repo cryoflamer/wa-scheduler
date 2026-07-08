@@ -5,6 +5,7 @@ const { createShutdownHandler, shutdownRuntime } = require('../src/runtime');
 test('runtime shutdown stops scheduler and streams before closing HTTP and WhatsApp', async () => {
     const calls = [];
     const schedulerManager = { stop: () => calls.push('scheduler.stop') };
+    const notificationManager = { stop: () => calls.push('notifications.stop') };
     const app = { closeStreams: () => calls.push('app.closeStreams') };
     const server = {
         close: (callback) => {
@@ -16,10 +17,11 @@ test('runtime shutdown stops scheduler and streams before closing HTTP and Whats
     };
     const client = { destroy: async () => calls.push('client.destroy') };
 
-    await shutdownRuntime({ schedulerManager, app, server, client });
+    await shutdownRuntime({ schedulerManager, app, server, client, notificationManager });
 
-    assert.deepEqual(calls.slice(0, 5), [
+    assert.deepEqual(calls.slice(0, 6), [
         'scheduler.stop',
+        'notifications.stop',
         'app.closeStreams',
         'server.close',
         'server.closeIdleConnections',

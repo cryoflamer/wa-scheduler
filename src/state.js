@@ -2,10 +2,31 @@ const fs = require('fs');
 const path = require('path');
 const { createJobSnapshot, fingerprintJobSnapshot } = require('./run_identity');
 
+const DEFAULT_STATE_RETENTION_DAYS = 90;
+const MAX_STATE_RETENTION_DAYS = 3650;
+
+function parseStateRetentionDays(value) {
+    if (value === undefined || value === null || value === '') return DEFAULT_STATE_RETENTION_DAYS;
+    const days = Number(value);
+    if (!Number.isInteger(days) || days < 1 || days > MAX_STATE_RETENTION_DAYS) {
+        throw new Error(`WA_STATE_RETENTION_DAYS must be an integer between 1 and ${MAX_STATE_RETENTION_DAYS}`);
+    }
+    return days;
+}
+
+function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
 class StateStore {
-    constructor(statePath = 'data/state.json') {
-        this.statePath = path.resolve(statePath);
+    constructor(statePath = 'data/state.json', options = {}) {
+        this.statePath = path.resolve(statePath || 'data/state.json');
+        this.now = options.now || (() => new Date());
+        this.retentionDays = parseStateRetentionDays(
+            options.retentionDays ?? process.env.WA_STATE_RETENTION_DAYS
+        );
         this.state = this.load();
+        if (this.pruneExpired()) this.persist();
     }
 
     load() {
@@ -51,7 +72,7 @@ class StateStore {
             record.jobId = record.snapshot.id;
             this.persist();
         }
-        return JSON.parse(JSON.stringify(record.snapshot));
+        return clone(record.snapshot);
     }
 
     markRunStarted(key, startedAt) {
@@ -100,7 +121,7 @@ class StateStore {
 
     getRunSnapshot(key) {
         const snapshot = this.state[key]?.snapshot;
-        return snapshot ? JSON.parse(JSON.stringify(snapshot)) : null;
+        return snapshot ? clone(snapshot) : null;
     }
 
     findUnresolvedScheduledRun(jobId, excludeKey = null) {
@@ -127,14 +148,63 @@ class StateStore {
         this.persist();
     }
 
-    markNotificationSent(key, eventType, provider, sentAt) {
-        const record = this.ensureJobRecord(key);
-        if (!record.notifications || typeof record.notifications !== 'object') record.notifications = {};
-        if (!record.notifications[eventType] || typeof record.notifications[eventType] !== 'object') {
-            record.notifications[eventType] = {};
-        }
-        record.notifications[eventType][provider] = { status: 'sent', sentAt };
+    queueNotification(key, eventType, provider, intent, createdAt) {
+        const providerRecord = this.ensureNotificationRecord(key, eventType, provider);
+        if (providerRecord.status === 'sent') return clone(providerRecord);
+        if (!providerRecord.notification) providerRecord.notification = clone(intent.notification);
+        providerRecord.status = 'pending';
+        providerRecord.createdAt ||= createdAt;
+        providerRecord.attempts = Number.isInteger(providerRecord.attempts) ? providerRecord.attempts : 0;
+        providerRecord.jobId ||= intent.jobId || null;
+        providerRecord.nextAttemptAt ||= createdAt;
         this.persist();
+        return clone(providerRecord);
+    }
+
+    markNotificationFailed(key, eventType, provider, failedAt, nextAttemptAt, errorMessage) {
+        const providerRecord = this.ensureNotificationRecord(key, eventType, provider);
+        if (providerRecord.status === 'sent') return;
+        providerRecord.status = 'pending';
+        providerRecord.attempts = (Number(providerRecord.attempts) || 0) + 1;
+        providerRecord.lastAttemptAt = failedAt;
+        providerRecord.nextAttemptAt = nextAttemptAt;
+        providerRecord.lastError = String(errorMessage || 'Notification delivery failed');
+        this.persist();
+    }
+
+    markNotificationSent(key, eventType, provider, sentAt) {
+        const providerRecord = this.ensureNotificationRecord(key, eventType, provider);
+        providerRecord.status = 'sent';
+        providerRecord.sentAt = sentAt;
+        delete providerRecord.notification;
+        delete providerRecord.nextAttemptAt;
+        delete providerRecord.lastError;
+        this.persist();
+    }
+
+    listPendingNotifications(dueBefore = this.now().toISOString()) {
+        const pending = [];
+        for (const [key, record] of Object.entries(this.state)) {
+            const notifications = record?.notifications;
+            if (!notifications || typeof notifications !== 'object') continue;
+            for (const [eventType, providers] of Object.entries(notifications)) {
+                if (!providers || typeof providers !== 'object') continue;
+                for (const [provider, delivery] of Object.entries(providers)) {
+                    if (delivery?.status !== 'pending' || !delivery.notification) continue;
+                    if (delivery.nextAttemptAt && delivery.nextAttemptAt > dueBefore) continue;
+                    pending.push({
+                        key,
+                        eventType,
+                        provider,
+                        jobId: delivery.jobId || record.jobId || record.snapshot?.id || null,
+                        notification: clone(delivery.notification),
+                        attempts: Number(delivery.attempts) || 0,
+                        nextAttemptAt: delivery.nextAttemptAt || null
+                    });
+                }
+            }
+        }
+        return pending;
     }
 
     getRunDetails(key, job) {
@@ -209,6 +279,53 @@ class StateStore {
         };
     }
 
+    pruneExpired() {
+        const cutoff = this.now().getTime() - this.retentionDays * 24 * 60 * 60 * 1000;
+        let changed = false;
+        for (const [key, record] of Object.entries(this.state)) {
+            if (this.isUnresolvedRecord(record)) continue;
+            const timestamp = this.recordTimestamp(record);
+            if (timestamp === null || timestamp >= cutoff) continue;
+            delete this.state[key];
+            changed = true;
+        }
+        return changed;
+    }
+
+    isUnresolvedRecord(record) {
+        if (record?.status === 'running' || record?.status === 'retrying') return true;
+        return Object.values(record?.notifications || {}).some((providers) => (
+            Object.values(providers || {}).some((delivery) => delivery?.status === 'pending')
+        ));
+    }
+
+    recordTimestamp(record) {
+        const timestamps = [record?.sentAt, record?.failedAt, record?.startedAt];
+        for (const providers of Object.values(record?.notifications || {})) {
+            for (const delivery of Object.values(providers || {})) {
+                timestamps.push(delivery?.sentAt, delivery?.lastAttemptAt, delivery?.createdAt);
+            }
+        }
+        const values = timestamps
+            .filter(Boolean)
+            .map((value) => Date.parse(value))
+            .filter(Number.isFinite);
+        return values.length > 0 ? Math.max(...values) : null;
+    }
+
+    ensureNotificationRecord(key, eventType, provider) {
+        const record = this.ensureJobRecord(key);
+        if (!record.notifications || typeof record.notifications !== 'object') record.notifications = {};
+        if (!record.notifications[eventType] || typeof record.notifications[eventType] !== 'object') {
+            record.notifications[eventType] = {};
+        }
+        const current = record.notifications[eventType][provider];
+        if (!current || typeof current !== 'object' || Array.isArray(current)) {
+            record.notifications[eventType][provider] = {};
+        }
+        return record.notifications[eventType][provider];
+    }
+
     ensureJobRecord(key) {
         const current = this.state[key];
         if (!current || typeof current !== 'object' || Array.isArray(current)) this.state[key] = {};
@@ -225,4 +342,8 @@ class StateStore {
     }
 }
 
-module.exports = { StateStore };
+module.exports = {
+    DEFAULT_STATE_RETENTION_DAYS,
+    StateStore,
+    parseStateRetentionDays
+};

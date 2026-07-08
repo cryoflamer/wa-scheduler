@@ -149,7 +149,7 @@ The service starts wa-scheduler when the systemd user manager starts. On WSL, th
 
 The dashboard can notify the operator independently from the job recipient. Notification settings are local runtime configuration stored in the ignored `schedule.json` and `.env`.
 
-WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, and partial-send events can be enabled separately for scheduled and manual **Send now** runs. Manual completion notifications explicitly say that the job was sent manually. Operator notifications identify the job recipient by alias when possible, list sent and pending items by filename, and include failure details. Each provider has an **Include message body** checkbox; it is off by default so the original job text is not copied into operator notifications unless explicitly enabled. Notification delivery state is persisted per run and provider, so a successful provider is not repeated when another provider is retried.
+WhatsApp notifications can be sent to any configured recipient alias, typically `SELF`. Completion, failure, and partial-send events can be enabled separately for scheduled and manual **Send now** runs. Manual completion notifications explicitly say that the job was sent manually. Operator notifications identify the job recipient by alias when possible, list sent and pending items by filename, and include failure details. Each provider has an **Include message body** checkbox; it is off by default so the original job text is not copied into operator notifications unless explicitly enabled. Notification delivery uses a persistent per-run provider outbox. A successful provider is never repeated, while a failed provider remains pending in `data/state.json` and is retried in the background with bounded backoff after WhatsApp is ready, including after a process or service restart.
 
 Notification settings are saved automatically. Checkbox and recipient changes are persisted immediately; ntfy server and topic fields are saved after a short typing pause. The dashboard shows `Saving…`, `Saved ✓`, or `Save failed`, retries one failed autosave, and warns before closing the page while unsaved notification changes remain. There is no separate notification save button.
 
@@ -173,6 +173,16 @@ Each job can optionally retry a failed scheduled run. Retry is disabled by defau
 `attempts` is the maximum number of automatic retries after the original scheduled attempt. Retry progress is persisted in `data/state.json`, including the next retry time. If wa-scheduler or the user service restarts while a retry is pending, the pending retry is restored from state. Disabled jobs keep their pending retry state paused and resume it when enabled again.
 
 Retries use the immutable scheduled-run snapshot and the existing item-level send state, so edits made after a failure do not change the recipient, message, files, captions, or retry policy of an in-flight run, and already sent items are skipped. The first failure publishes a retry-scheduled operator notification. Intermediate retries remain quiet for providers that already received that notice because notification delivery is idempotent per provider. A successful retry publishes a recovered notification; exhausting all configured retries publishes an urgent exhausted notification.
+
+## State retention
+
+Completed and failed run records in `data/state.json` are pruned on startup after 90 days by default. Running jobs, pending scheduled retries, and records with pending notification deliveries are never pruned. Override the retention window with:
+
+```dotenv
+WA_STATE_RETENTION_DAYS=90
+```
+
+The value must be an integer from 1 to 3650 days. Notification outbox payloads are removed from state as soon as the corresponding provider delivery succeeds.
 
 ## Activity retention
 

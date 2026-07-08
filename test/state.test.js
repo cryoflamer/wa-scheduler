@@ -177,3 +177,49 @@ test('scheduled run snapshots preserve dispatch payload and fingerprint', () => 
         assert.equal(store.state[key].jobId, 'report');
     });
 });
+
+test('state retention prunes old resolved records but keeps unresolved work and pending notifications', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-state-retention-'));
+    const statePath = path.join(directory, 'state.json');
+    const old = '2026-01-01T00:00:00.000Z';
+    const now = () => new Date('2026-07-08T00:00:00.000Z');
+
+    try {
+        const initial = new StateStore(statePath, { retentionDays: 90, now });
+        initial.markComplete('old-complete:2026-01-01T08:00', old);
+        initial.markRunFailed('old-failed:2026-01-01T08:00', old);
+        initial.markRunStarted('active:2026-01-01T08:00', old);
+        initial.markRetryScheduled('retrying:2026-01-01T08:00', 1, '2026-07-09T00:00:00.000Z');
+        initial.markComplete('pending-notification:2026-01-01T08:00', old);
+        initial.queueNotification(
+            'pending-notification:2026-01-01T08:00',
+            'job.completed',
+            'ntfy',
+            { notification: { title: 'title', message: 'message' }, jobId: 'pending-notification' },
+            old
+        );
+
+        const reloaded = new StateStore(statePath, { retentionDays: 90, now });
+        assert.equal(reloaded.has('old-complete:2026-01-01T08:00'), false);
+        assert.equal(reloaded.has('old-failed:2026-01-01T08:00'), false);
+        assert.equal(reloaded.has('active:2026-01-01T08:00'), true);
+        assert.equal(reloaded.has('retrying:2026-01-01T08:00'), true);
+        assert.equal(reloaded.has('pending-notification:2026-01-01T08:00'), true);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('state retention defaults to 90 days and rejects invalid values', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-state-retention-config-'));
+    try {
+        const store = new StateStore(path.join(directory, 'state.json'), { now: () => new Date() });
+        assert.equal(store.retentionDays, 90);
+        assert.throws(
+            () => new StateStore(path.join(directory, 'invalid.json'), { retentionDays: 0 }),
+            /WA_STATE_RETENTION_DAYS must be an integer between 1 and 3650/
+        );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

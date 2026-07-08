@@ -24,8 +24,9 @@ function closeHttpServer(server, forceCloseDelayMs = 1000) {
     });
 }
 
-async function shutdownRuntime({ schedulerManager, app, server, client }) {
+async function shutdownRuntime({ schedulerManager, app, server, client, notificationManager }) {
     schedulerManager?.stop?.();
+    notificationManager?.stop?.();
     app?.closeStreams?.();
     await closeHttpServer(server);
     await client?.destroy?.();
@@ -46,6 +47,7 @@ function createShutdownHandler(options) {
         app,
         server,
         client,
+        notificationManager,
         activity,
         timeoutMs = 15000,
         exit = (code) => process.exit(code)
@@ -63,7 +65,7 @@ function createShutdownHandler(options) {
 
             try {
                 await withTimeout(
-                    shutdownRuntime({ schedulerManager, app, server, client }),
+                    shutdownRuntime({ schedulerManager, app, server, client, notificationManager }),
                     timeoutMs
                 );
                 activity?.info('runtime.stopped', { message: 'wa-scheduler stopped' });
