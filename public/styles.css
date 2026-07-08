@@ -112,3 +112,5 @@ textarea { resize: vertical; }
     .notifications { grid-template-columns: 1fr; }
     .notification-actions { grid-column: 1; }
 }
+
+.notification-hint { margin-top: -0.2rem; font-size: 0.82rem; line-height: 1.35; }

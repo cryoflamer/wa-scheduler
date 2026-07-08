@@ -104,6 +104,7 @@ function renderNotifications() {
             </div>
             <label>Server<input id="notify-ntfy-server" value="${escapeHtml(config.ntfy.server)}"></label>
             <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
+            <div class="muted notification-hint">Install the ntfy app on the phone and subscribe to this exact topic. A successful test confirms publication to ntfy, not phone delivery.</div>
             <div class="notification-events">
                 ${notificationEventChecks('ntfy', config.ntfy.events, ['job.completed', 'job.failed', 'job.partial', 'whatsapp.disconnected'])}
             </div>
@@ -317,10 +318,13 @@ document.addEventListener('click', async (event) => {
     }
     if (event.target.dataset.testNotification) {
         event.target.disabled = true;
+        const provider = event.target.dataset.testNotification;
         try {
+            const enabled = $(`#notify-${provider}-enabled`);
+            if (enabled) enabled.checked = true;
             await saveNotifications();
-            await api(`/api/notifications/test/${encodeURIComponent(event.target.dataset.testNotification)}`, { method: 'POST' });
-            toast('Test notification sent');
+            const result = await api(`/api/notifications/test/${encodeURIComponent(provider)}`, { method: 'POST' });
+            toast(result.message || 'Test notification sent');
         } catch (error) { $('#notification-error').textContent = error.message; }
         finally { event.target.disabled = false; }
     }

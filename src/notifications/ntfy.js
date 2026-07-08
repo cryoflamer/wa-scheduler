@@ -21,6 +21,12 @@ async function sendNtfyNotification(_client, config, notification, fetchImpl = f
     if (!response.ok) {
         throw new Error(`ntfy request failed: HTTP ${response.status}`);
     }
+
+    if (typeof response.json === 'function') {
+        return response.json().catch(() => ({ accepted: true }));
+    }
+
+    return { accepted: true };
 }
 
 module.exports = { sendNtfyNotification, topicUrl };

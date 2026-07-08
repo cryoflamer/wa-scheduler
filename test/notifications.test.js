@@ -92,13 +92,37 @@ test('notification text does not include job message bodies or captions', () => 
     assert.match(notification.message, /report completed/);
 });
 
+
+
+test('notification tests return provider acknowledgement metadata', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-notification-ack-'));
+    const stateStore = new StateStore(path.join(directory, 'state.json'));
+    const manager = new NotificationManager({
+        client: {}, stateStore,
+        providers: {
+            whatsapp: async () => ({ accepted: true, id: 'wa-test' }),
+            ntfy: async () => ({ accepted: true, id: 'ntfy-test' })
+        }
+    });
+    manager.apply({
+        whatsapp: { enabled: false, recipient: '', events: [] },
+        ntfy: { enabled: true, server: 'https://ntfy.sh', topic: 'topic', events: [] }
+    });
+
+    try {
+        assert.deepEqual(await manager.test('ntfy'), { accepted: true, id: 'ntfy-test' });
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('ntfy provider posts to the configured topic with priority headers', async () => {
     let request;
     await sendNtfyNotification({}, { server: 'https://ntfy.sh', topic: 'topic name' }, {
         title: 'wa-scheduler failed', priority: 'high', tags: ['x'], message: 'failed'
     }, async (url, options) => {
         request = { url, options };
-        return { ok: true };
+        return { ok: true, json: async () => ({ id: 'message-id', event: 'message' }) };
     });
 
     assert.equal(request.url, 'https://ntfy.sh/topic%20name');

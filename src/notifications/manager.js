@@ -110,14 +110,18 @@ class NotificationManager {
     async test(providerName) {
         const provider = this.providers[providerName];
         const providerConfig = this.config[providerName];
-        if (!provider || !providerConfig?.enabled) {
+        if (!provider || !providerConfig) {
+            throw new Error(`Unknown notification provider: ${providerName}`);
+        }
+        if (!providerConfig.enabled) {
             throw new Error(`${providerName} notifications are not enabled`);
         }
-        await provider(this.client, providerConfig, buildNotification('notification.test'));
+        const result = await provider(this.client, providerConfig, buildNotification('notification.test'));
         this.activity?.sent('notification.test.sent', {
             message: `${providerName} test notification sent`,
             details: { provider: providerName }
         });
+        return result || { accepted: true };
     }
 
     wasSent(key, type, provider) {

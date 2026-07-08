@@ -303,8 +303,16 @@ function createWebServer(options) {
             if (request.params.provider === 'whatsapp' && status.whatsapp !== 'ready') {
                 throw new Error('WhatsApp is not ready');
             }
-            await notificationManager.test(request.params.provider);
-            response.json({ ok: true });
+            const provider = request.params.provider;
+            const result = await notificationManager.test(provider);
+            response.json({
+                ok: true,
+                provider,
+                accepted: result?.accepted !== false,
+                message: provider === 'ntfy'
+                    ? 'Test notification published to ntfy. The phone must be subscribed to this exact topic.'
+                    : 'Test notification sent to WhatsApp.'
+            });
         } catch (error) {
             sendJsonError(response, error, activity);
         }

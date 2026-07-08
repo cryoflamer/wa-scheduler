@@ -229,7 +229,7 @@ test('notification test API delegates to the selected provider', async (t) => {
     const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
     const app = createWebServer({
         client: {}, stateStore: {}, schedulerManager,
-        notificationManager: { apply() {}, async test(provider) { calls.push(provider); } },
+        notificationManager: { apply() {}, async test(provider) { calls.push(provider); return { accepted: true, id: 'test-id' }; } },
         configPath, status: { whatsapp: 'ready' }
     });
     const server = app.listen(0, '127.0.0.1');
@@ -243,4 +243,8 @@ test('notification test API delegates to the selected provider', async (t) => {
     const response = await fetch(`http://127.0.0.1:${port}/api/notifications/test/ntfy`, { method: 'POST' });
     assert.equal(response.status, 200);
     assert.deepEqual(calls, ['ntfy']);
+    const body = await response.json();
+    assert.equal(body.provider, 'ntfy');
+    assert.equal(body.accepted, true);
+    assert.match(body.message, /published to ntfy/);
 });
