@@ -20,6 +20,7 @@ const {
 const { runJob } = require('../scheduler');
 const { safeErrorMessage } = require('../activity');
 const { loadEnvValue, maskSecret, saveEnvValue } = require('../env');
+const { sendTextMessage } = require('../whatsapp');
 
 const RECIPIENT_PATTERN = /^\$\{(WA_RECIPIENT_[A-Z0-9_]+)\}$/;
 const NTFY_TOPIC_KEY = 'WA_NTFY_TOPIC';
@@ -320,6 +321,50 @@ function createWebServer(options) {
             response.json(serializeNotifications(raw, envPath));
         } catch (error) {
             sendJsonError(response, error, activity);
+        }
+    });
+
+    app.post('/api/notifications/ntfy/topic/send', async (request, response) => {
+        try {
+            if (status.whatsapp !== 'ready') {
+                throw new Error('WhatsApp is not ready');
+            }
+
+            const recipientKeyValue = String(request.body?.recipientKey || '').trim();
+            const recipient = loadRecipients(envPath).find((candidate) => candidate.key === recipientKeyValue);
+            if (!recipient) {
+                throw new Error('Select a recipient for the ntfy topic');
+            }
+
+            const raw = loadRawConfig(configPath);
+            const topic = loadEnvValue(NTFY_TOPIC_KEY, envPath) || process.env[NTFY_TOPIC_KEY] || '';
+            if (!topic) {
+                throw new Error('Enter an ntfy topic first');
+            }
+
+            const server = raw.notifications?.ntfy?.server || 'https://ntfy.sh';
+            const message = [
+                '🔔 ntfy topic for wa-scheduler',
+                '',
+                `Server: ${server}`,
+                `Topic: ${topic}`,
+                '',
+                'Copy the topic and subscribe to it in the ntfy app.'
+            ].join('\n');
+
+            await sendTextMessage(client, recipient.number, message);
+            activity?.sent('notification.ntfy_topic.sent', {
+                message: `ntfy topic sent to ${recipient.name}`,
+                details: { recipient: recipient.name }
+            });
+
+            return response.json({
+                ok: true,
+                recipient: recipient.name,
+                message: `ntfy topic sent to ${recipient.name}`
+            });
+        } catch (error) {
+            return sendJsonError(response, error, activity);
         }
     });
 

@@ -23,3 +23,10 @@ test('notification autosave preserves the current form and flushes before tests'
     assert.match(app, /window\.addEventListener\('beforeunload'/);
     assert.match(app, /Save failed/);
 });
+
+test('ntfy topic setup action selects a recipient and sends through the dedicated API', () => {
+    assert.match(app, /data-send-ntfy-topic/);
+    assert.match(app, /notify-ntfy-topic-recipient/);
+    assert.match(app, /\/api\/notifications\/ntfy\/topic\/send/);
+    assert.match(app, /data-notification-local/);
+});

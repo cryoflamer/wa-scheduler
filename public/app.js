@@ -89,6 +89,16 @@ function renderNotifications() {
         </option>
     `).join('');
 
+    const topicRecipientKey = config.whatsapp.recipientKey
+        || state.recipients.find((recipient) => recipient.name === 'SELF')?.key
+        || state.recipients[0]?.key
+        || '';
+    const topicRecipients = '<option value="">Select recipient</option>' + state.recipients.map((recipient) => `
+        <option value="${escapeHtml(recipient.key)}" ${recipient.key === topicRecipientKey ? 'selected' : ''}>
+            ${escapeHtml(recipient.name)} · ${escapeHtml(recipient.maskedNumber)}
+        </option>
+    `).join('');
+
     notificationsEl.innerHTML = `
         <article class="notification-card">
             <div class="notification-head">
@@ -116,6 +126,8 @@ function renderNotifications() {
             <label>Server<input id="notify-ntfy-server" value="${escapeHtml(config.ntfy.server)}"></label>
             <label>Topic<input id="notify-ntfy-topic" type="password" placeholder="${config.ntfy.topicConfigured ? `Configured · ${escapeHtml(config.ntfy.maskedTopic)}` : 'Long random ntfy topic'}"></label>
             <div class="muted notification-hint">Install the ntfy app on the phone and subscribe to this exact topic. A successful test confirms publication to ntfy, not phone delivery.</div>
+            <label>Send topic to WhatsApp<select id="notify-ntfy-topic-recipient" data-notification-local>${topicRecipients}</select></label>
+            <button type="button" data-send-ntfy-topic>Send topic to WhatsApp</button>
             <label class="notification-event notification-option">
                 <input id="notify-ntfy-include-message" type="checkbox" ${config.ntfy.includeMessage ? 'checked' : ''}>
                 <span>Include message body</span>
@@ -409,6 +421,22 @@ document.addEventListener('click', async (event) => {
         state.editingFiles.splice(Number(event.target.dataset.removeFile), 1);
         renderFiles();
     }
+    if (event.target.dataset.sendNtfyTopic !== undefined) {
+        event.target.disabled = true;
+        try {
+            await flushNotificationSave();
+            const result = await api('/api/notifications/ntfy/topic/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ recipientKey: $('#notify-ntfy-topic-recipient').value })
+            });
+            toast(result.message || 'ntfy topic sent to WhatsApp');
+        } catch (error) {
+            $('#notification-error').textContent = error.message;
+        } finally {
+            event.target.disabled = false;
+        }
+    }
     if (event.target.dataset.testNotification) {
         event.target.disabled = true;
         const provider = event.target.dataset.testNotification;
@@ -451,7 +479,7 @@ document.addEventListener('click', async (event) => {
 
 
 notificationsEl.addEventListener('change', (event) => {
-    if (!event.target.closest('.notification-card')) return;
+    if (!event.target.closest('.notification-card') || event.target.dataset.notificationLocal !== undefined) return;
     queueNotificationSave(0);
 });
 

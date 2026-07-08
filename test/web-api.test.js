@@ -327,3 +327,73 @@ test('ntfy test API returns publication diagnostics', async (t) => {
     assert.equal(body.publishedAt, '2026-07-08T05:00:00.000Z');
     assert.match(body.message, /Message ID: ntfy-message-id/);
 });
+
+test('ntfy topic can be sent to a selected WhatsApp recipient without exposing it in activity', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-web-ntfy-topic-share-'));
+    const configPath = path.join(directory, 'schedule.json');
+    const envPath = path.join(directory, '.env');
+    const activity = new ActivityLog(path.join(directory, 'activity.jsonl'));
+    fs.writeFileSync(configPath, JSON.stringify({
+        timezone: 'Europe/Kyiv',
+        notifications: {
+            whatsapp: { enabled: false, recipient: '', events: [] },
+            ntfy: { enabled: true, server: 'https://ntfy.sh', topic: '${WA_NTFY_TOPIC}', events: [] }
+        },
+        jobs: []
+    }));
+    fs.writeFileSync(envPath, 'WA_RECIPIENT_SELF=380661234567\nWA_NTFY_TOPIC=private-topic-123\n');
+    process.env.WA_RECIPIENT_SELF = '380661234567';
+    process.env.WA_NTFY_TOPIC = 'private-topic-123';
+
+    const sent = [];
+    const client = {
+        async sendMessage(chatId, message) {
+            sent.push({ chatId, message });
+            return {};
+        }
+    };
+    const schedulerManager = { config: loadConfig(configPath), tasks: [], apply(config) { this.config = config; } };
+    const app = createWebServer({
+        client,
+        stateStore: {},
+        schedulerManager,
+        configPath,
+        envPath,
+        status: { whatsapp: 'ready' },
+        activity
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+        server.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+        delete process.env.WA_RECIPIENT_SELF;
+        delete process.env.WA_NTFY_TOPIC;
+    });
+    const { port } = server.address();
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/notifications/ntfy/topic/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipientKey: 'WA_RECIPIENT_SELF' })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.recipient, 'SELF');
+    assert.deepEqual(sent, [{
+        chatId: '380661234567@c.us',
+        message: [
+            '🔔 ntfy topic for wa-scheduler',
+            '',
+            'Server: https://ntfy.sh',
+            'Topic: private-topic-123',
+            '',
+            'Copy the topic and subscribe to it in the ntfy app.'
+        ].join('\n')
+    }]);
+    const activityEvents = activity.list({ limit: 10 });
+    assert.equal(activityEvents[0].type, 'notification.ntfy_topic.sent');
+    assert.match(activityEvents[0].message, /SELF/);
+    assert.doesNotMatch(JSON.stringify(activityEvents), /private-topic-123|380661234567/);
+});
